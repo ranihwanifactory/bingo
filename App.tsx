@@ -11,7 +11,9 @@ import {
   updateUserInfo, 
   recordWin, 
   getTopRankings,
-  getUserProfile
+  getUserProfile,
+  getH2HRecord,
+  updateH2HRecord
 } from './services/firebaseService';
 import { onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import BingoBoard from './components/BingoBoard';
@@ -19,7 +21,7 @@ import {
   Gamepad2, Trophy, User as UserIcon, Share2, LogOut, 
   Sparkles, BellRing, Smartphone, 
   Check, ExternalLink, AlertCircle, Medal, Users,
-  MessageCircle, Copy, PlusCircle, LogIn
+  MessageCircle, Copy, PlusCircle, LogIn, Swords
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -54,6 +56,22 @@ const App: React.FC = () => {
     const stats = await getUserProfile(uid);
     if (stats) setUserStats(stats);
   }, []);
+
+  const fetchH2HRecords = useCallback(async (newPlayers: PlayerInfo[]) => {
+    if (!user) return;
+    const updatedPlayers = await Promise.all(newPlayers.map(async (p) => {
+      if (p.id === user.uid) return p;
+      const record = await getH2HRecord(user.uid, p.id);
+      return {
+        ...p,
+        h2hRecord: {
+          myWins: record[user.uid] || 0,
+          opponentWins: record[p.id] || 0
+        }
+      };
+    }));
+    setPlayers(updatedPlayers);
+  }, [user]);
 
   const syncState = useCallback(() => {
     if (playersRef.current.length > 0 && playersRef.current[0].id === user?.uid) {
@@ -125,7 +143,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleMarkAction = useCallback((value: number, senderId: string) => {
+  const handleMarkAction = useCallback(async (value: number, senderId: string) => {
     const currentCells = [...cellsRef.current];
     const targetIdx = currentCells.findIndex(c => c.value === value);
     if (targetIdx === -1 || currentCells[targetIdx].isMarked) return;
@@ -157,11 +175,21 @@ const App: React.FC = () => {
       setStatus('won');
       sounds.playWin();
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+      
       if (senderId === user?.uid) {
-        recordWin(user.uid).then(() => fetchUserStats(user.uid));
+        // 전체 승수 업데이트
+        await recordWin(user.uid);
+        // 상대방들과의 전적 업데이트
+        for (const p of currentPlayers) {
+          if (p.id !== user.uid) {
+            await updateH2HRecord(user.uid, p.id);
+          }
+        }
+        fetchUserStats(user.uid);
+        fetchH2HRecords(currentPlayers);
       }
     }
-  }, [linesCount, user, fetchUserStats]);
+  }, [linesCount, user, fetchUserStats, fetchH2HRecords]);
 
   const calculateBingo = (board: BingoCell[]) => {
     const size = 5;
@@ -183,27 +211,32 @@ const App: React.FC = () => {
     if (status === 'playing' && matchId && user) {
       unsubscribe = subscribeToMatch(matchId, (payload) => {
         if (payload.action === 'join' || payload.action === 'presence') {
+          const newPlayerId = payload.playerId;
           setPlayers(prev => {
-            if (prev.find(p => p.id === payload.playerId)) return prev;
-            const newPlayers = [...prev, { 
-              id: payload.playerId, 
+            if (prev.find(p => p.id === newPlayerId)) return prev;
+            const newPlayersList = [...prev, { 
+              id: newPlayerId, 
               name: payload.name, 
               photoURL: payload.photoURL,
               color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] 
             }].sort((a, b) => a.id.localeCompare(b.id));
             
             sounds.playJoin();
+            // 전적 데이터 불러오기
+            fetchH2HRecords(newPlayersList);
+
             if (payload.action === 'join') {
               publishMessage(matchId, { action: 'presence', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
               setTimeout(syncState, 500);
             }
-            return newPlayers;
+            return newPlayersList;
           });
         } else if (payload.action === 'mark') {
           handleMarkAction(payload.value, payload.senderId);
         } else if (payload.action === 'sync_state') {
           if (payload.players) {
-            setPlayers(payload.players.sort((a: any, b: any) => a.id.localeCompare(b.id)));
+            const syncedPlayers = payload.players.sort((a: any, b: any) => a.id.localeCompare(b.id));
+            fetchH2HRecords(syncedPlayers);
           }
           const markedVals = payload.markedValues as {value: number, senderId: string}[];
           let updatedCells = [...cellsRef.current];
@@ -220,7 +253,7 @@ const App: React.FC = () => {
       publishMessage(matchId, { action: 'join', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
     }
     return () => unsubscribe?.();
-  }, [status, matchId, user, handleMarkAction, syncState]);
+  }, [status, matchId, user, handleMarkAction, syncState, fetchH2HRecords]);
 
   const startGame = async (forcedId?: string) => {
     const idToUse = forcedId || matchId;
@@ -230,7 +263,8 @@ const App: React.FC = () => {
     const values = generateRandomBoard();
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
-    setPlayers([{ id: user!.uid, name: user!.displayName || user!.email?.split('@')[0] || "마스터", photoURL: user!.photoURL || "", color: PLAYER_COLORS[0] }]);
+    const initialPlayer = { id: user!.uid, name: user!.displayName || user!.email?.split('@')[0] || "마스터", photoURL: user!.photoURL || "", color: PLAYER_COLORS[0] };
+    setPlayers([initialPlayer]);
     setCurrentTurnIdx(0);
     gameEndedRef.current = false;
     setStatus('playing');
@@ -324,21 +358,29 @@ const App: React.FC = () => {
                   {players.map((p, idx) => (
                     <div 
                       key={p.id}
-                      className={`flex-shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-2xl border-2 transition-all duration-300 ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-md scale-105 z-10' : 'bg-gray-50/50 border-transparent opacity-60'}`}
+                      className={`flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-2xl border-2 transition-all duration-300 ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-md scale-105 z-10' : 'bg-gray-50/50 border-transparent opacity-60'}`}
                     >
-                      <div className="relative">
-                        <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-8 h-8 rounded-xl border border-white shadow-sm" style={{ backgroundColor: p.color }} />
-                        {currentTurnIdx === idx && (
-                          <div className="absolute -top-1 -right-1 bg-[#FFD93D] rounded-full p-0.5 animate-pulse">
-                            <Sparkles size={8} className="text-white" fill="white" />
-                          </div>
-                        )}
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-8 h-8 rounded-xl border border-white shadow-sm" style={{ backgroundColor: p.color }} />
+                          {currentTurnIdx === idx && (
+                            <div className="absolute -top-1 -right-1 bg-[#FFD93D] rounded-full p-0.5 animate-pulse">
+                              <Sparkles size={8} className="text-white" fill="white" />
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[11px] font-black whitespace-nowrap">{p.id === user?.uid ? "나" : p.name}</span>
                       </div>
-                      <span className="text-[11px] font-black whitespace-nowrap">{p.id === user?.uid ? "나" : p.name}</span>
+                      {p.id !== user?.uid && p.h2hRecord && (
+                        <div className="flex items-center gap-1 bg-[#FFF9E3] px-2 py-0.5 rounded-full border border-[#FFD93D] text-[8px] font-black text-[#FF69B4]">
+                          <Swords size={8} />
+                          {p.h2hRecord.myWins}승 {p.h2hRecord.opponentWins}패
+                        </div>
+                      )}
                     </div>
                   ))}
                   {players.length < 2 && (
-                    <button onClick={handleShare} className="flex-shrink-0 px-4 py-1.5 rounded-2xl border-2 border-dashed border-[#4D96FF] flex items-center gap-2 text-[#4D96FF] bg-blue-50/50 animate-pulse">
+                    <button onClick={handleShare} className="flex-shrink-0 px-4 py-2 rounded-2xl border-2 border-dashed border-[#4D96FF] flex items-center gap-2 text-[#4D96FF] bg-blue-50/50 animate-pulse">
                       <PlusCircle size={14} />
                       <span className="text-[10px] font-black">초대하기</span>
                     </button>

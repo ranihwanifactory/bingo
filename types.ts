@@ -13,6 +13,10 @@ export interface PlayerInfo {
   name: string;
   color: string;
   photoURL?: string;
+  h2hRecord?: {
+    myWins: number;
+    opponentWins: number;
+  };
 }
 
 export interface UserRanking {
@@ -20,4 +24,9 @@ export interface UserRanking {
   nickname: string;
   wins: number;
   photoURL?: string;
+}
+
+export interface H2HRecord {
+  [uid: string]: number | string[]; // UID별 승리 횟수 및 playerIds 배열
+  playerIds: string[];
 }
