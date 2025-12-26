@@ -19,9 +19,8 @@ import { onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.
 import BingoBoard from './components/BingoBoard';
 import { 
   Gamepad2, Trophy, User as UserIcon, Share2, LogOut, 
-  Sparkles, BellRing, Smartphone, 
-  Check, ExternalLink, AlertCircle, Medal, Users,
-  MessageCircle, Copy, PlusCircle, LogIn, Swords
+  Sparkles, Check, AlertCircle, Medal,
+  MessageCircle, PlusCircle, LogIn, Swords, Copy
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -41,8 +40,6 @@ const App: React.FC = () => {
   const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
   const [rankings, setRankings] = useState<UserRanking[]>([]);
   const [copyFeedback, setCopyFeedback] = useState(false);
-  
-  const [isKakaoBrowser, setIsKakaoBrowser] = useState(false);
 
   const playersRef = useRef<PlayerInfo[]>([]);
   playersRef.current = players;
@@ -53,24 +50,28 @@ const App: React.FC = () => {
   const gameEndedRef = useRef(false);
 
   const fetchUserStats = useCallback(async (uid: string) => {
-    const stats = await getUserProfile(uid);
-    if (stats) setUserStats(stats);
+    try {
+      const stats = await getUserProfile(uid);
+      if (stats) setUserStats(stats);
+    } catch (e) { console.error(e); }
   }, []);
 
   const fetchH2HRecords = useCallback(async (newPlayers: PlayerInfo[]) => {
     if (!user) return;
-    const updatedPlayers = await Promise.all(newPlayers.map(async (p) => {
-      if (p.id === user.uid) return p;
-      const record = await getH2HRecord(user.uid, p.id);
-      return {
-        ...p,
-        h2hRecord: {
-          myWins: record[user.uid] || 0,
-          opponentWins: record[p.id] || 0
-        }
-      };
-    }));
-    setPlayers(updatedPlayers);
+    try {
+      const updatedPlayers = await Promise.all(newPlayers.map(async (p) => {
+        if (p.id === user.uid) return p;
+        const record = await getH2HRecord(user.uid, p.id);
+        return {
+          ...p,
+          h2hRecord: {
+            myWins: record[user.uid] || 0,
+            opponentWins: record[p.id] || 0
+          }
+        };
+      }));
+      setPlayers(updatedPlayers);
+    } catch (e) { console.error(e); }
   }, [user]);
 
   const syncState = useCallback(() => {
@@ -93,11 +94,6 @@ const App: React.FC = () => {
     const roomFromUrl = params.get('room');
     if (roomFromUrl) setMatchId(roomFromUrl);
 
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.indexOf('kakaotalk') > -1) {
-      setIsKakaoBrowser(true);
-    }
-
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
@@ -112,15 +108,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (activeTab === 'rank') {
-      getTopRankings(10).then(setRankings);
+      getTopRankings(10).then(setRankings).catch(console.error);
     } else if (activeTab === 'profile' && user) {
       fetchUserStats(user.uid);
     }
   }, [activeTab, user, fetchUserStats]);
 
-  const generateRoomId = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
+  const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const handleCopyLink = async () => {
     const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
@@ -134,10 +128,10 @@ const App: React.FC = () => {
   const handleShare = async () => {
     if (!matchId.trim()) return alert("공유할 방 번호가 없어요!");
     const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
-    const shareData = { title: '팡팡 빙고!', text: `방 번호 [${matchId}] 로 들어와!`, url: shareUrl };
-
     if (navigator.share) {
-      try { await navigator.share(shareData); } catch (e) {}
+      try {
+        await navigator.share({ title: '팡팡 빙고!', text: `방 번호 [${matchId}] 로 들어와!`, url: shareUrl });
+      } catch (e) { handleCopyLink(); }
     } else {
       handleCopyLink();
     }
@@ -177,13 +171,9 @@ const App: React.FC = () => {
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
       
       if (senderId === user?.uid) {
-        // 전체 승수 업데이트
         await recordWin(user.uid);
-        // 상대방들과의 전적 업데이트
         for (const p of currentPlayers) {
-          if (p.id !== user.uid) {
-            await updateH2HRecord(user.uid, p.id);
-          }
+          if (p.id !== user.uid) await updateH2HRecord(user.uid, p.id);
         }
         fetchUserStats(user.uid);
         fetchH2HRecords(currentPlayers);
@@ -222,7 +212,6 @@ const App: React.FC = () => {
             }].sort((a, b) => a.id.localeCompare(b.id));
             
             sounds.playJoin();
-            // 전적 데이터 불러오기
             fetchH2HRecords(newPlayersList);
 
             if (payload.action === 'join') {
@@ -263,8 +252,7 @@ const App: React.FC = () => {
     const values = generateRandomBoard();
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
-    const initialPlayer = { id: user!.uid, name: user!.displayName || user!.email?.split('@')[0] || "마스터", photoURL: user!.photoURL || "", color: PLAYER_COLORS[0] };
-    setPlayers([initialPlayer]);
+    setPlayers([{ id: user!.uid, name: user!.displayName || user!.email?.split('@')[0] || "마스터", photoURL: user!.photoURL || "", color: PLAYER_COLORS[0] }]);
     setCurrentTurnIdx(0);
     gameEndedRef.current = false;
     setStatus('playing');
@@ -273,10 +261,7 @@ const App: React.FC = () => {
     setCommentary("친구들을 기다리고 있어요! 초대 버튼으로 공유하세요.");
   };
 
-  const createNewGame = () => {
-    const newId = generateRoomId();
-    startGame(newId);
-  };
+  const createNewGame = () => startGame(generateRoomId());
 
   const handleCellClick = (val: number) => {
     if (status !== 'playing' || players.length < 2) {
@@ -296,125 +281,124 @@ const App: React.FC = () => {
   const activePlayer = players[currentTurnIdx];
   const isMyTurn = activePlayer?.id === user?.uid;
 
-  if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] font-black text-gray-400 gap-4"><div className="animate-spin text-4xl">✨</div>로딩 중...</div>;
+  if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] font-black text-[#FFD93D] gap-4"><div className="animate-spin text-5xl">🧸</div><p>팡팡 빙고 입장 중...</p></div>;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset">
-      {copyFeedback && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown"><Check size={14} className="text-green-400"/><span className="font-black text-xs">방 링크 복사 완료!</span></div>}
+    <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset overflow-hidden">
+      {copyFeedback && <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown"><Check size={14} className="text-green-400"/><span className="font-black text-xs">초대 링크 복사 완료!</span></div>}
 
-      <main className="flex-1 flex flex-col items-center w-full max-w-md mx-auto relative overflow-hidden">
+      <main className="flex-1 flex flex-col items-center w-full max-w-md mx-auto relative px-4">
         
         {activeTab === 'game' && (
-          <div className="w-full flex-1 flex flex-col p-4 animate__animated animate__fadeIn">
+          <div className="w-full h-full flex flex-col animate__animated animate__fadeIn py-4">
             {!user ? (
-              <div className="flex-1 flex flex-col justify-center items-center text-center space-y-6">
-                <div className="text-7xl floating">🧸</div>
-                <h2 className="text-3xl font-black text-[#FF69B4]">팡팡 빙고!</h2>
-                <button onClick={() => loginWithGoogle()} className="w-full py-4 bg-white border-4 border-[#FFD93D] rounded-3xl shadow-[0_6px_0_#FFD93D] flex items-center justify-center gap-4 transition-all">
+              <div className="flex-1 flex flex-col justify-center items-center text-center space-y-8">
+                <div className="text-8xl floating">🌈</div>
+                <div className="space-y-2">
+                  <h2 className="text-4xl font-black text-[#FF69B4] tracking-tighter">팡팡 빙고!</h2>
+                  <p className="text-gray-400 font-bold">친구들과 실시간으로 즐겨요!</p>
+                </div>
+                <button onClick={() => loginWithGoogle()} className="w-full py-5 bg-white border-4 border-[#FFD93D] rounded-[2rem] shadow-[0_8px_0_#FFD93D] flex items-center justify-center gap-4 transition-all active:translate-y-1 active:shadow-none">
                   <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="G"/>
-                  <span className="text-lg font-black">Google 로그인</span>
+                  <span className="text-xl font-black">Google로 시작하기</span>
                 </button>
               </div>
             ) : status === 'idle' ? (
               <div className="flex-1 flex flex-col justify-center space-y-6">
-                <div className="bg-white p-6 rounded-[2.5rem] shadow-[0_8px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-8">
-                  <div className="text-center space-y-2">
-                    <div className="text-5xl floating inline-block">🏰</div>
-                    <h2 className="text-2xl font-black text-[#FF69B4]">게임 로비</h2>
-                    <p className="text-xs font-bold text-gray-400">새 게임을 만들거나 친구의 방에 입장하세요!</p>
+                <div className="bg-white p-8 rounded-[3rem] shadow-[0_12px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-8">
+                  <div className="text-center space-y-3">
+                    <div className="text-6xl floating inline-block">🏰</div>
+                    <h2 className="text-3xl font-black text-[#FF69B4]">게임 로비</h2>
                   </div>
 
                   <div className="space-y-4">
-                    <button onClick={createNewGame} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-lg rounded-2xl shadow-[0_6px_0_#E5B700] active:translate-y-1 transition-all flex items-center justify-center gap-2">
-                      <PlusCircle size={20} /> 새 방 만들기
+                    <button onClick={createNewGame} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2">
+                      <PlusCircle size={24} /> 방 만들기
                     </button>
 
-                    <div className="flex items-center gap-2 py-2">
+                    <div className="flex items-center gap-3">
                       <div className="flex-1 h-[2px] bg-gray-100"></div>
-                      <span className="text-[10px] font-black text-gray-300">OR</span>
+                      <span className="text-xs font-black text-gray-300">또는</span>
                       <div className="flex-1 h-[2px] bg-gray-100"></div>
                     </div>
 
-                    <div className="space-y-2">
-                      <div className="relative">
-                        <input 
-                          type="text" 
-                          value={matchId} 
-                          onChange={(e)=>setMatchId(e.target.value.toUpperCase())} 
-                          placeholder="방 번호 입력 (예: AB12CD)" 
-                          className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl p-4 text-center text-xl font-black outline-none placeholder:text-gray-300" 
-                        />
-                      </div>
-                      <button onClick={() => startGame()} className="w-full py-4 bg-[#4D96FF] text-white font-black text-lg rounded-2xl shadow-[0_6px_0_#2B66CC] active:translate-y-1 transition-all flex items-center justify-center gap-2">
-                        <LogIn size={20} /> 방 입장하기
+                    <div className="space-y-3">
+                      <input 
+                        type="text" 
+                        value={matchId} 
+                        onChange={(e)=>setMatchId(e.target.value.toUpperCase())} 
+                        placeholder="방 번호 입력" 
+                        className="w-full bg-[#F0F7FF] border-4 border-[#4D96FF] rounded-[1.5rem] p-4 text-center text-2xl font-black outline-none placeholder:text-gray-300" 
+                      />
+                      <button onClick={() => startGame()} className="w-full py-5 bg-[#4D96FF] text-white font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#2B66CC] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2">
+                        <LogIn size={24} /> 입장하기
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-2 scrollbar-hide px-1">
+              <div className="flex-1 flex flex-col">
+                {/* 상단 플레이어 리스트 */}
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide">
                   {players.map((p, idx) => (
                     <div 
                       key={p.id}
-                      className={`flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-2xl border-2 transition-all duration-300 ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-md scale-105 z-10' : 'bg-gray-50/50 border-transparent opacity-60'}`}
+                      className={`flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-2xl border-2 transition-all duration-300 ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-lg scale-105 z-10' : 'bg-white/50 border-transparent opacity-60'}`}
                     >
-                      <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-8 h-8 rounded-xl border border-white shadow-sm" style={{ backgroundColor: p.color }} />
-                          {currentTurnIdx === idx && (
-                            <div className="absolute -top-1 -right-1 bg-[#FFD93D] rounded-full p-0.5 animate-pulse">
-                              <Sparkles size={8} className="text-white" fill="white" />
-                            </div>
-                          )}
-                        </div>
-                        <span className="text-[11px] font-black whitespace-nowrap">{p.id === user?.uid ? "나" : p.name}</span>
+                      <div className="relative">
+                        <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm" style={{ backgroundColor: p.color }} />
+                        {currentTurnIdx === idx && <div className="absolute -top-1 -right-1 bg-[#FFD93D] rounded-full p-0.5 animate-pulse"><Sparkles size={10} className="text-white" fill="white" /></div>}
                       </div>
+                      <span className="text-[10px] font-black">{p.id === user?.uid ? "나" : p.name}</span>
                       {p.id !== user?.uid && p.h2hRecord && (
-                        <div className="flex items-center gap-1 bg-[#FFF9E3] px-2 py-0.5 rounded-full border border-[#FFD93D] text-[8px] font-black text-[#FF69B4]">
-                          <Swords size={8} />
-                          {p.h2hRecord.myWins}승 {p.h2hRecord.opponentWins}패
-                        </div>
+                        <div className="text-[8px] font-black text-[#FF69B4] bg-[#FFF0F6] px-1.5 rounded-full">{p.h2hRecord.myWins}W {p.h2hRecord.opponentWins}L</div>
                       )}
                     </div>
                   ))}
                   {players.length < 2 && (
-                    <button onClick={handleShare} className="flex-shrink-0 px-4 py-2 rounded-2xl border-2 border-dashed border-[#4D96FF] flex items-center gap-2 text-[#4D96FF] bg-blue-50/50 animate-pulse">
-                      <PlusCircle size={14} />
-                      <span className="text-[10px] font-black">초대하기</span>
+                    <button onClick={handleShare} className="flex-shrink-0 w-14 h-14 rounded-2xl border-4 border-dashed border-[#4D96FF] flex items-center justify-center text-[#4D96FF] bg-blue-50 animate-pulse">
+                      <PlusCircle size={24} />
                     </button>
                   )}
                 </div>
 
-                <div className="bg-white rounded-[2rem] p-3 mb-3 border-2 border-gray-100 shadow-sm flex items-center justify-between px-5">
+                {/* 게임 현황판 */}
+                <div className="bg-white rounded-[2rem] p-4 mb-4 border-4 border-gray-50 shadow-sm flex items-center justify-between">
                    <div className="flex flex-col">
-                     <span className="text-[9px] font-black text-gray-300 uppercase">Room: {matchId}</span>
-                     <p className="text-sm font-black text-gray-600">
-                       {players.length < 2 ? "친구가 들어오길 기다리는 중..." : (isMyTurn ? <span className="text-[#FF69B4] animate-pulse">내 차례예요! 🍎</span> : <span>{activePlayer?.name}님의 차례</span>)}
-                     </p>
+                     <span className="text-[10px] font-black text-gray-300 uppercase">ROOM: {matchId}</span>
+                     <div className="flex items-center gap-1">
+                        <p className="text-base font-black text-gray-700">
+                          {players.length < 2 ? "친구를 기다려요..." : (isMyTurn ? <span className="text-[#FF69B4] animate-pulse">내 차례! 🍎</span> : <span>{activePlayer?.name} 차례</span>)}
+                        </p>
+                     </div>
                    </div>
-                   <div className="bg-pink-50 px-4 py-2 rounded-2xl border border-pink-100 flex flex-col items-center">
-                      <span className="text-[9px] font-black text-pink-300 uppercase">Lines</span>
-                      <span className="text-lg font-black text-[#FF69B4]">{linesCount} / 5</span>
+                   <div className="bg-[#FFF0F6] px-6 py-2 rounded-2xl border-2 border-pink-100 flex flex-col items-center">
+                      <span className="text-[10px] font-black text-pink-300 uppercase">LINES</span>
+                      <span className="text-2xl font-black text-[#FF69B4] leading-none">{linesCount} / 5</span>
                    </div>
                 </div>
 
-                <div className="mb-3 px-2 flex items-center gap-2">
-                  <div className="bg-[#FFD93D] p-1.5 rounded-lg text-white"><MessageCircle size={14} fill="white" /></div>
-                  <p className="text-[11px] font-bold text-gray-400 italic">"{commentary}"</p>
+                {/* AI 말풍선 */}
+                <div className="mb-4 bg-white/80 backdrop-blur-sm p-3 rounded-[1.5rem] border-2 border-dashed border-[#FFD93D] flex items-center gap-3">
+                  <div className="bg-[#FFD93D] p-2 rounded-full text-white flex-shrink-0"><MessageCircle size={16} fill="white" /></div>
+                  <p className="text-xs font-bold text-gray-500 italic truncate">"{commentary}"</p>
                 </div>
 
-                <div className="flex-1 flex items-center justify-center">
+                {/* 빙고판 */}
+                <div className="flex-1 flex items-center justify-center pb-20">
                   <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={players.reduce((acc,p)=>({...acc, [p.id]:p.color}), {})} />
                 </div>
 
+                {/* 우승 팝업 */}
                 {status === 'won' && (
-                   <div className="mt-4 p-5 bg-white rounded-[2.5rem] border-4 border-[#FFD93D] text-center animate__animated animate__jackInTheBox shadow-2xl">
-                     <div className="text-4xl mb-1">🎉</div>
-                     <p className="text-2xl font-black text-[#FF69B4] uppercase tracking-tighter">Bingo Clear!</p>
-                     <p className="text-xs font-bold text-gray-400 mb-4">{activePlayer?.name}님이 승리했어요!</p>
-                     <button onClick={()=>setStatus('idle')} className="w-full py-3 bg-[#FFD93D] rounded-2xl font-black shadow-[0_4px_0_#E5B700] active:translate-y-1">다시 시작하기</button>
+                   <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm p-6">
+                     <div className="bg-white w-full p-8 rounded-[3rem] border-8 border-[#FFD93D] text-center animate__animated animate__jackInTheBox shadow-2xl">
+                       <div className="text-6xl mb-2">🏆</div>
+                       <h3 className="text-3xl font-black text-[#FF69B4] mb-1">BINGO!</h3>
+                       <p className="font-bold text-gray-500 mb-6">{activePlayer?.name}님이 승리했어요!</p>
+                       <button onClick={()=>setStatus('idle')} className="w-full py-4 bg-[#FFD93D] rounded-2xl font-black text-xl shadow-[0_6px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all">확인</button>
+                     </div>
                    </div>
                 )}
               </div>
@@ -423,59 +407,60 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'rank' && (
-          <div className="w-full flex-1 p-6 flex flex-col animate__animated animate__fadeIn">
-            <h2 className="text-2xl font-black text-center mb-6">🏆 명예의 전당</h2>
-            <div className="flex-1 overflow-y-auto space-y-3 pb-24 scrollbar-hide">
+          <div className="w-full flex-1 p-4 flex flex-col animate__animated animate__fadeIn">
+            <h2 className="text-3xl font-black text-center mb-6 text-[#FF69B4]">🏆 명예의 전당</h2>
+            <div className="flex-1 overflow-y-auto space-y-4 pb-24 scrollbar-hide">
               {rankings.map((r, i)=>(
-                <div key={r.uid} className={`flex items-center justify-between p-4 rounded-3xl border-2 ${i===0?'bg-yellow-50 border-yellow-300':'bg-white border-gray-100'}`}>
-                  <div className="flex items-center gap-3">
-                    <span className={`w-6 h-6 flex items-center justify-center rounded-full font-black text-[10px] text-white ${i===0?'bg-yellow-400':'bg-gray-300'}`}>{i+1}</span>
-                    <img src={r.photoURL} className="w-10 h-10 rounded-xl" />
-                    <span className="font-black truncate max-w-[100px]">{r.nickname}</span>
+                <div key={r.uid} className={`flex items-center justify-between p-5 rounded-[2rem] border-4 ${i===0?'bg-yellow-50 border-yellow-300':'bg-white border-gray-100'}`}>
+                  <div className="flex items-center gap-4">
+                    <span className={`w-8 h-8 flex items-center justify-center rounded-full font-black text-xs text-white ${i===0?'bg-yellow-400':'bg-gray-300'}`}>{i+1}</span>
+                    <img src={r.photoURL} className="w-12 h-12 rounded-2xl shadow-sm" />
+                    <span className="text-lg font-black truncate max-w-[120px]">{r.nickname}</span>
                   </div>
-                  <p className="text-lg font-black text-[#FF69B4]">{r.wins}<span className="text-[10px] ml-1">WINS</span></p>
+                  <p className="text-2xl font-black text-[#FF69B4]">{r.wins}<span className="text-[10px] ml-1">WINS</span></p>
                 </div>
               ))}
-              {rankings.length === 0 && <p className="text-center py-10 text-gray-400 font-bold">랭킹 로딩 중...</p>}
+              {rankings.length === 0 && <div className="text-center py-20 text-gray-300 font-bold">랭킹 데이터가 없어요!</div>}
             </div>
           </div>
         )}
 
         {activeTab === 'profile' && (
-          <div className="w-full flex-1 p-8 flex flex-col items-center justify-center animate__animated animate__fadeIn">
+          <div className="w-full flex-1 flex flex-col items-center justify-center animate__animated animate__fadeIn pb-24">
             {user ? (
-              <div className="bg-white p-8 rounded-[3rem] border-4 border-[#FFD93D] w-full text-center space-y-6 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#FF69B4] via-[#FFD93D] to-[#4D96FF]"></div>
-                <div className="relative inline-block mt-4">
-                  <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-24 h-24 rounded-[2.5rem] border-4 border-[#FFF9E3] shadow-lg" />
-                  <div className="absolute -bottom-1 -right-1 bg-[#FFD93D] p-2 rounded-full shadow-md text-white"><Medal size={16} /></div>
+              <div className="bg-white p-10 rounded-[4rem] border-8 border-[#FFD93D] w-full text-center space-y-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-3 bg-gradient-to-r from-[#FF69B4] via-[#FFD93D] to-[#4D96FF]"></div>
+                <div className="relative inline-block">
+                  <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-32 h-32 rounded-[3rem] border-8 border-[#FFF9E3] shadow-xl" />
+                  <div className="absolute -bottom-2 -right-2 bg-[#FFD93D] p-3 rounded-full shadow-lg text-white"><Medal size={24} /></div>
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black">{userStats?.nickname || user.displayName}</h3>
-                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">{user.email}</p>
+                  <h3 className="text-3xl font-black">{userStats?.nickname || user.displayName}</h3>
+                  <p className="text-xs font-bold text-gray-300 mt-1">{user.email}</p>
                 </div>
-                <div className="bg-[#FFF9E3] p-5 rounded-[2rem] border-2 border-dashed border-[#FFD93D]">
-                  <p className="text-[10px] font-black text-[#FFD93D] uppercase tracking-widest mb-1">Total Victories</p>
-                  <p className="text-4xl font-black text-[#FF69B4]">{userStats?.wins || 0}</p>
+                <div className="bg-[#FFF9E3] p-6 rounded-[2.5rem] border-4 border-dashed border-[#FFD93D]">
+                  <p className="text-xs font-black text-[#FFD93D] uppercase tracking-widest mb-2">누적 승리</p>
+                  <p className="text-6xl font-black text-[#FF69B4]">{userStats?.wins || 0}</p>
                 </div>
-                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-xs uppercase tracking-widest flex items-center gap-2 mx-auto">
-                  <LogOut size={14}/> 로그아웃
+                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-sm flex items-center gap-2 mx-auto">
+                  <LogOut size={16}/> 로그아웃
                 </button>
               </div>
-            ) : <p className="font-black text-gray-400">로그인이 필요합니다.</p>}
+            ) : <p className="font-black text-gray-400">로그인이 필요해요!</p>}
           </div>
         )}
       </main>
 
       {user && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t-2 border-gray-100 flex justify-around items-center px-4 pb-8 pt-4 z-50">
-          <NavButton active={activeTab==='game'} icon={<Gamepad2 size={24}/>} label="게임" onClick={()=>setActiveTab('game')} />
-          <NavButton active={activeTab==='rank'} icon={<Trophy size={24}/>} label="순위" onClick={()=>setActiveTab('rank')} />
-          <NavButton active={activeTab==='profile'} icon={<UserIcon size={24}/>} label="정보" onClick={()=>setActiveTab('profile')} />
-          {status === 'playing' ? (
-            <NavButton active={false} icon={<LogOut size={24} className="text-red-300"/>} label="종료" onClick={() => confirm("게임을 종료할까요?") && setStatus('idle')} />
-          ) : (
-             <div className="w-[44px]"></div>
+        <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t-4 border-gray-50 flex justify-around items-center px-6 pb-8 pt-4 z-50 rounded-t-[3rem] shadow-2xl">
+          <NavButton active={activeTab==='game'} icon={<Gamepad2 size={28}/>} label="빙고" onClick={()=>setActiveTab('game')} />
+          <NavButton active={activeTab==='rank'} icon={<Trophy size={28}/>} label="랭킹" onClick={()=>setActiveTab('rank')} />
+          <NavButton active={activeTab==='profile'} icon={<UserIcon size={28}/>} label="내정보" onClick={()=>setActiveTab('profile')} />
+          {status === 'playing' && (
+            <button onClick={() => confirm("게임을 나갈까요?") && setStatus('idle')} className="flex flex-col items-center gap-1 text-red-300">
+              <LogOut size={28}/>
+              <span className="text-[10px] font-black uppercase">나가기</span>
+            </button>
           )}
         </nav>
       )}
@@ -484,10 +469,10 @@ const App: React.FC = () => {
 };
 
 const NavButton: React.FC<{ active: boolean; icon: React.ReactNode; label: string; onClick: () => void }> = ({ active, icon, label, onClick }) => (
-  <button onClick={onClick} className={`flex flex-col items-center gap-1 transition-all ${active ? 'text-[#FF69B4] scale-110' : 'text-gray-300'}`}>
-    {icon}
-    <span className="text-[9px] font-black uppercase tracking-tighter">{label}</span>
-    {active && <div className="w-1 h-1 bg-[#FF69B4] rounded-full mt-0.5"></div>}
+  <button onClick={onClick} className={`flex flex-col items-center gap-1 transition-all duration-300 ${active ? 'text-[#FF69B4] scale-110 -translate-y-2' : 'text-gray-300'}`}>
+    <div className={`p-1 ${active ? 'bg-pink-50 rounded-xl' : ''}`}>{icon}</div>
+    <span className="text-[10px] font-black">{label}</span>
+    {active && <div className="w-1.5 h-1.5 bg-[#FF69B4] rounded-full mt-0.5 animate-pulse"></div>}
   </button>
 );
 
