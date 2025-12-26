@@ -31,7 +31,6 @@ const App: React.FC = () => {
   const gameEndedRef = useRef(false);
 
   useEffect(() => {
-    // Firebase 익명 로그인
     loginAnonymously().then(cred => {
       setCurrentUser(cred.user);
     }).catch(err => console.error("Firebase Login Error", err));
@@ -58,7 +57,24 @@ const App: React.FC = () => {
     return { count: lines.length, winningIndices: new Set(lines.flat()) };
   };
 
-  const applyRemoteMark = useCallback((value: number, nextTurnIdx: number, senderId: string) => {
+  // 턴 전환 로직: 특정 플레이어가 클릭했을 때 다음 사람을 찾는 함수
+  const advanceTurn = useCallback((lastSenderId: string) => {
+    const currentPlayers = playersRef.current;
+    if (currentPlayers.length === 0) return;
+    
+    const lastIdx = currentPlayers.findIndex(p => p.id === lastSenderId);
+    if (lastIdx === -1) return; // 알 수 없는 플레이어면 턴 유지
+    
+    const nextIdx = (lastIdx + 1) % currentPlayers.length;
+    setCurrentTurnIdx(nextIdx);
+
+    // 내 차례가 되었는지 확인
+    if (currentPlayers[nextIdx].id === currentUser?.uid) {
+      sounds.playTurn();
+    }
+  }, [currentUser]);
+
+  const applyRemoteMark = useCallback((value: number, senderId: string) => {
     const currentCells = cellsRef.current;
     const targetCell = currentCells.find(c => c.value === value);
     if (!targetCell || targetCell.isMarked) return;
@@ -76,12 +92,9 @@ const App: React.FC = () => {
     }));
 
     setCells(finalCells);
-    setCurrentTurnIdx(nextTurnIdx);
     
-    const nextPlayer = playersRef.current[nextTurnIdx];
-    if (nextPlayer?.id === currentUser?.uid) {
-      sounds.playTurn();
-    }
+    // 메시지 발신자 기준으로 다음 턴 계산
+    advanceTurn(senderId);
 
     if (count > linesCount) {
       sounds.playWin();
@@ -95,12 +108,11 @@ const App: React.FC = () => {
       sounds.playWin();
       confetti({ particleCount: 200, spread: 80, origin: { y: 0.6 } });
       
-      // 승리한 사람이 나일 경우에만 DB 업데이트
       if (senderId === currentUser?.uid) {
         recordWin(currentUser.uid).catch(console.error);
       }
     }
-  }, [linesCount, currentUser]);
+  }, [linesCount, currentUser, advanceTurn]);
 
   const updateAICommentary = async (count: number) => {
     const isWinner = count >= 5;
@@ -115,19 +127,28 @@ const App: React.FC = () => {
         if (payload.action === 'join' || payload.action === 'presence') {
           setPlayers(prev => {
             if (prev.find(p => p.id === payload.playerId)) return prev;
-            sounds.playJoin();
-            const newPlayers = [...prev, { id: payload.playerId, name: payload.name, color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] }]
-              .sort((a, b) => a.id.localeCompare(b.id));
             
+            // 새 플레이어 추가 및 ID순 정렬 (모든 클라이언트 동일 순서 보장)
+            const newPlayers = [...prev, { 
+              id: payload.playerId, 
+              name: payload.name, 
+              color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] 
+            }].sort((a, b) => a.id.localeCompare(b.id));
+
+            sounds.playJoin();
+            
+            // 가입 메시지를 받으면 내 정보도 다시 뿌려서 동기화
             if (payload.action === 'join') {
               publishMessage(matchId, { action: 'presence', playerId: currentUser.uid, name: nickname });
             }
             return newPlayers;
           });
         } else if (payload.action === 'mark') {
-          applyRemoteMark(payload.value, payload.nextTurnIdx, payload.senderId);
+          applyRemoteMark(payload.value, payload.senderId);
         }
       });
+      
+      // 입장 시 최초 1회 브로드캐스트
       publishMessage(matchId, { action: 'join', playerId: currentUser.uid, name: nickname });
     }
     return () => {
@@ -143,30 +164,37 @@ const App: React.FC = () => {
     localStorage.setItem('bingo_nickname', nickname);
     await updateUserInfo(currentUser.uid, nickname);
 
-    // 각 플레이어마다 무작위로 다른 숫자 배열을 생성합니다.
     const values = generateRandomBoard();
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
+    // 내 자신을 포함한 초기 플레이어 설정 (나중에 presence로 다른 플레이어들 추가됨)
     setPlayers([{ id: currentUser.uid, name: nickname, color: PLAYER_COLORS[0] }]);
+    setCurrentTurnIdx(0);
     gameEndedRef.current = false;
     setStatus('playing');
     sounds.playJoin();
-    setCommentary(`${nickname} 친구 반가워요! 게임을 시작해볼까요?`);
+    setCommentary(`${nickname} 친구 반가워요! 다른 친구들이 들어오길 기다려볼까요?`);
   };
 
   const handleCellClick = (val: number) => {
     if (status !== 'playing') return;
+    
+    // 현재 리스트에서의 내 턴 여부 확인
     const isMyTurn = players.length > 0 && players[currentTurnIdx]?.id === currentUser?.uid;
+    
     if (!isMyTurn) {
-      setCommentary("지금은 친구 차례예요! 조금만 기다려줄래요? 🙏");
+      setCommentary(`${players[currentTurnIdx]?.name} 친구의 차례예요! 조금만 참아주세요. 🙏`);
       return;
     }
+    
     const target = cells.find(c => c.value === val);
     if (target?.isMarked) return;
 
-    const nextTurnIdx = (currentTurnIdx + 1) % players.length;
-    publishMessage(matchId, { action: 'mark', value: val, nextTurnIdx, senderId: currentUser.uid });
-    applyRemoteMark(val, nextTurnIdx, currentUser.uid);
+    // 내가 눌렀음을 알림 (인덱스를 보내지 않고 내 ID만 전송)
+    publishMessage(matchId, { action: 'mark', value: val, senderId: currentUser.uid });
+    
+    // 내 화면에도 즉시 반영
+    applyRemoteMark(val, currentUser.uid);
   };
 
   const currPlayer = players[currentTurnIdx];
@@ -232,9 +260,10 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className={`p-4 rounded-3xl border-4 transition-all duration-300 flex items-center justify-between ${isMyTurn ? 'bg-[#FFEB3B]/30 border-[#FFD93D] my-turn-active animate__animated animate__pulse animate__infinite' : 'bg-white border-gray-100 shadow-md'}`}>
+            {/* 턴 카드 섹션 - 누구 차례인지 더 명확하게 표시 */}
+            <div className={`p-4 rounded-3xl border-4 transition-all duration-500 flex items-center justify-between ${isMyTurn ? 'bg-[#FFEB3B]/40 border-[#FFD93D] shadow-[0_0_25px_#FFD93D] animate__animated animate__pulse animate__infinite' : 'bg-white border-gray-100 shadow-md'}`}>
               <div className="flex items-center gap-3">
-                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg transform transition-transform ${isMyTurn ? 'rotate-12 scale-110' : ''}`} style={{ backgroundColor: currPlayer?.color }}>
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg transform transition-all duration-300 ${isMyTurn ? 'rotate-12 scale-110' : 'opacity-60'}`} style={{ backgroundColor: currPlayer?.color || '#eee' }}>
                   {isMyTurn ? '🦁' : '👤'}
                 </div>
                 <div>
@@ -243,7 +272,7 @@ const App: React.FC = () => {
                     {isMyTurn && <BellRing size={10} className="text-[#FF69B4] animate-bounce"/>}
                   </div>
                   <p className="text-xl font-black text-gray-700">
-                    {isMyTurn ? <span className="text-[#FF69B4]">내 차례예요! ✨</span> : <span>{currPlayer?.name || '기다려요...'}</span>}
+                    {isMyTurn ? <span className="text-[#FF69B4]">내 차례예요! ✨</span> : <span>{currPlayer?.name || '친구를 기다려요'}</span>}
                   </p>
                 </div>
               </div>
@@ -254,7 +283,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="flex -space-x-3">
                    {players.map(p => (
-                     <div key={p.id} className="w-6 h-6 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-[10px] text-white font-bold" style={{ backgroundColor: p.color }}>
+                     <div key={p.id} className={`w-6 h-6 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-[10px] text-white font-bold transition-transform ${p.id === currPlayer?.id ? 'scale-125 z-10' : 'opacity-50'}`} style={{ backgroundColor: p.color }}>
                        {p.name[0]}
                      </div>
                    ))}
