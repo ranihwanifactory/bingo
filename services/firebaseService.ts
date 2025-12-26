@@ -2,6 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
   getAuth, 
+  signInAnonymously, 
   signInWithPopup, 
   GoogleAuthProvider, 
   createUserWithEmailAndPassword, 
@@ -23,7 +24,7 @@ import {
   limit, 
   getDocs 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { UserRanking, H2HRecord } from "../types";
+import { UserRanking } from "../types";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA3pP5KlWjmVrCnvWN217IAejSxCBRgd0U",
@@ -42,6 +43,17 @@ const googleProvider = new GoogleAuthProvider();
 
 export const loginWithGoogle = async () => {
   return await signInWithPopup(auth, googleProvider);
+};
+
+export const loginWithEmail = async (email: string, pass: string) => {
+  try {
+    return await signInWithEmailAndPassword(auth, email, pass);
+  } catch (error: any) {
+    if (error.code === 'auth/user-not-found') {
+      return await createUserWithEmailAndPassword(auth, email, pass);
+    }
+    throw error;
+  }
 };
 
 export const logout = async () => {
@@ -88,46 +100,6 @@ export const recordWin = async (uid: string) => {
   await updateDoc(userRef, {
     wins: increment(1)
   });
-};
-
-/**
- * 두 사용자 간의 상대 전적을 가져옵니다.
- */
-export const getH2HRecord = async (uid1: string, uid2: string): Promise<{ [key: string]: number }> => {
-  const id = [uid1, uid2].sort().join('_');
-  const h2hRef = doc(db, "h2h_records", id);
-  const h2hSnap = await getDoc(h2hRef);
-  
-  if (h2hSnap.exists()) {
-    const data = h2hSnap.data();
-    return {
-      [uid1]: data[uid1] || 0,
-      [uid2]: data[uid2] || 0
-    };
-  }
-  
-  return { [uid1]: 0, [uid2]: 0 };
-};
-
-/**
- * 승리 시 상대 전적을 업데이트합니다.
- */
-export const updateH2HRecord = async (winnerUid: string, loserUid: string) => {
-  const id = [winnerUid, loserUid].sort().join('_');
-  const h2hRef = doc(db, "h2h_records", id);
-  const h2hSnap = await getDoc(h2hRef);
-  
-  if (!h2hSnap.exists()) {
-    await setDoc(h2hRef, {
-      [winnerUid]: 1,
-      [loserUid]: 0,
-      playerIds: [winnerUid, loserUid]
-    });
-  } else {
-    await updateDoc(h2hRef, {
-      [winnerUid]: increment(1)
-    });
-  }
 };
 
 export const getTopRankings = async (count: number = 10): Promise<UserRanking[]> => {
