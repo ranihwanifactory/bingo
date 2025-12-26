@@ -6,31 +6,40 @@ interface BingoBoardProps {
   cells: BingoCell[];
   onCellClick: (value: number) => void;
   status: string;
+  playerColors: Record<string, string>;
 }
 
-const BingoBoard: React.FC<BingoBoardProps> = ({ cells, onCellClick, status }) => {
+const BingoBoard: React.FC<BingoBoardProps> = ({ cells, onCellClick, status, playerColors }) => {
   return (
-    <div className="w-full max-w-md mx-auto aspect-square grid grid-cols-5 gap-2 p-3 bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-2xl">
-      {cells.map((cell, idx) => (
-        <button
-          key={idx}
-          disabled={status === 'won'}
-          onClick={() => onCellClick(cell.value)}
-          className={`
-            relative flex items-center justify-center p-1 text-xl md:text-2xl font-orbitron font-bold rounded-xl transition-all duration-300
-            ${cell.isMarked 
-              ? 'bg-cyan-500 text-white shadow-[0_0_20px_rgba(6,182,212,0.5)] scale-95' 
-              : 'bg-slate-700/60 text-slate-300 hover:bg-slate-600 active:scale-90'
-            }
-            ${cell.isWinningCell ? 'ring-4 ring-pink-500 shadow-[0_0_25px_rgba(236,72,153,0.8)] animate-pulse' : ''}
-          `}
-        >
-          {cell.value}
-          {cell.isMarked && (
-            <div className="absolute inset-0 border-2 border-cyan-300/40 rounded-xl pointer-events-none"></div>
-          )}
-        </button>
-      ))}
+    <div className="w-full max-w-sm mx-auto aspect-square grid grid-cols-5 gap-3 p-4 bg-white rounded-[2.5rem] shadow-[0_12px_0_#e2e8f0] border-4 border-[#FFD93D]">
+      {cells.map((cell, idx) => {
+        const markerColor = cell.markedBy ? playerColors[cell.markedBy] || '#FF6B6B' : 'transparent';
+        
+        return (
+          <button
+            key={idx}
+            disabled={status === 'won'}
+            onClick={() => onCellClick(cell.value)}
+            className={`
+              relative flex items-center justify-center text-2xl font-black rounded-2xl transition-all duration-200 bubble-shadow
+              ${cell.isMarked 
+                ? 'scale-90 text-white animate__animated animate__pulse' 
+                : 'bg-[#F0F4F8] text-[#546E7A] hover:bg-[#E2E8F0] active:translate-y-1'
+              }
+              ${cell.isWinningCell ? 'ring-4 ring-yellow-400 z-10' : ''}
+            `}
+            style={{ 
+              backgroundColor: cell.isMarked ? markerColor : undefined,
+              boxShadow: cell.isMarked ? `0 4px 0 rgba(0,0,0,0.2)` : undefined
+            }}
+          >
+            {cell.value}
+            {cell.isWinningCell && (
+              <div className="absolute -top-1 -right-1 text-xs">⭐</div>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 };

@@ -1,12 +1,12 @@
 
 {
-  "name": "Neon Bingo Live",
-  "short_name": "NeonBingo",
-  "description": "Real-time Multiplayer Neon Bingo with AI",
+  "name": "우당탕탕! 팡팡 빙고",
+  "short_name": "팡팡빙고",
+  "description": "친구들과 함께 즐기는 귀여운 실시간 빙고 게임",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#22d3ee",
+  "background_color": "#FFF9E3",
+  "theme_color": "#FFCFEE",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/5953/5953496.png",
