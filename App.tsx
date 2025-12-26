@@ -18,7 +18,7 @@ import BingoBoard from './components/BingoBoard';
 import { 
   Play, MessageCircle, User as UserIcon, Users, 
   LogOut, Sparkles, BellRing, Trophy, Medal, X, 
-  LogIn, Mail, ShieldCheck, Gamepad2, Download, Smartphone, ExternalLink, AlertCircle
+  LogIn, Mail, ShieldCheck, Gamepad2, Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -37,8 +37,7 @@ const App: React.FC = () => {
   const [showRanking, setShowRanking] = useState(false);
   const [rankings, setRankings] = useState<UserRanking[]>([]);
   
-  // Browser Detection
-  const [isKakaoBrowser, setIsKakaoBrowser] = useState(false);
+  // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
   // Login states
@@ -54,8 +53,9 @@ const App: React.FC = () => {
   currentTurnIdxRef.current = currentTurnIdx;
   const gameEndedRef = useRef(false);
 
-  // Sync turn and board
+  // Sync turn and board for late joiners
   const syncState = useCallback(() => {
+    // Only the first player in the sorted list (the "host") broadcasts the state
     if (playersRef.current.length > 0 && playersRef.current[0].id === user?.uid) {
       const markedValues = cellsRef.current
         .filter(c => c.isMarked)
@@ -70,13 +70,6 @@ const App: React.FC = () => {
   }, [matchId, user]);
 
   useEffect(() => {
-    // Check for KakaoTalk In-App Browser
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.indexOf('kakaotalk') > -1) {
-      setIsKakaoBrowser(true);
-      handleOpenExternal(); // Auto-try external browser
-    }
-
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthLoading(false);
@@ -85,31 +78,13 @@ const App: React.FC = () => {
       }
     });
 
-    const handler = (e: any) => {
+    window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handler);
+    });
 
-    return () => {
-      unsub();
-      window.removeEventListener('beforeinstallprompt', handler);
-    };
+    return unsub;
   }, []);
-
-  const handleOpenExternal = () => {
-    const currentUrl = window.location.href;
-    const ua = navigator.userAgent.toLowerCase();
-    
-    if (ua.match(/android/)) {
-      // Android Chrome intent
-      const intentUrl = `intent://${currentUrl.replace(/https?:\/\//i, '')}#Intent;scheme=http;package=com.android.chrome;end`;
-      window.location.href = intentUrl;
-    } else {
-      // iOS / Other: Use Kakao deep link to open external browser
-      window.location.href = `kakaotalk://web/openExternal?url=${encodeURIComponent(currentUrl)}`;
-    }
-  };
 
   const handleInstall = async () => {
     if (deferredPrompt) {
@@ -156,6 +131,7 @@ const App: React.FC = () => {
 
     setCells(finalCells);
     
+    // Crucially: Rotate turn consistently for everyone based on the sorted players list
     const currentPlayers = playersRef.current;
     if (currentPlayers.length > 0) {
       const lastPlayerIdx = currentPlayers.findIndex(p => p.id === senderId);
@@ -193,6 +169,7 @@ const App: React.FC = () => {
           setPlayers(prev => {
             if (prev.find(p => p.id === payload.playerId)) return prev;
             
+            // Re-sort players by ID to ensure turn order is identical across clients
             const newPlayers = [...prev, { 
               id: payload.playerId, 
               name: payload.name, 
@@ -203,12 +180,14 @@ const App: React.FC = () => {
             sounds.playJoin();
             
             if (payload.action === 'join') {
+              // Send my presence back to new joiner
               publishMessage(matchId, { 
                 action: 'presence', 
                 playerId: user.uid, 
                 name: user.displayName || user.email?.split('@')[0],
                 photoURL: user.photoURL
               });
+              // Briefly delay sync to allow joiner to receive presence messages first
               setTimeout(syncState, 800);
             }
             return newPlayers;
@@ -216,6 +195,7 @@ const App: React.FC = () => {
         } else if (payload.action === 'mark') {
           handleMarkAction(payload.value, payload.senderId);
         } else if (payload.action === 'sync_state') {
+          // Sync state for players who joined late
           const markedVals = payload.markedValues as {value: number, senderId: string}[];
           let updatedCells = [...cellsRef.current];
           markedVals.forEach(mv => {
@@ -229,6 +209,7 @@ const App: React.FC = () => {
         }
       });
       
+      // Notify others I'm joining
       publishMessage(matchId, { 
         action: 'join', 
         playerId: user.uid, 
@@ -288,36 +269,6 @@ const App: React.FC = () => {
     }
   };
 
-  // KakaoTalk Browser Notice Overlay
-  if (isKakaoBrowser) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] p-8 text-center gap-6 animate__animated animate__fadeIn">
-      <div className="w-24 h-24 bg-[#FFD93D] rounded-full flex items-center justify-center text-white shadow-lg animate__animated animate__bounceIn">
-        <AlertCircle size={48} />
-      </div>
-      <div className="space-y-2">
-        <h2 className="text-2xl font-black text-gray-700">잠시만요! 🖐️</h2>
-        <p className="text-gray-500 font-bold leading-relaxed">
-          카카오톡 브라우저에서는<br/> 
-          <span className="text-[#FF69B4]">구글 로그인</span>이 작동하지 않아요.
-        </p>
-      </div>
-      <div className="bg-white p-6 rounded-[2rem] border-4 border-[#FFD93D] shadow-xl w-full max-w-xs space-y-4">
-        <p className="text-sm text-gray-400 font-bold italic">
-          원활한 게임 진행을 위해<br/> 크롬이나 사파리로 열어주세요!
-        </p>
-        <button 
-          onClick={handleOpenExternal}
-          className="w-full py-4 bg-[#4D96FF] text-white font-black rounded-2xl shadow-[0_6px_0_#3B7EDF] flex items-center justify-center gap-2 active:translate-y-1 active:shadow-none transition-all"
-        >
-          <ExternalLink size={20}/> 외부 브라우저로 열기
-        </button>
-      </div>
-      <div className="flex items-center gap-2 text-gray-300 text-xs font-bold animate-pulse">
-        <Smartphone size={14} /> 자동 전환이 안 된다면 버튼을 눌러주세요.
-      </div>
-    </div>
-  );
-
   if (authLoading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] gap-4">
       <div className="animate-bounce text-6xl">✨</div>
@@ -337,8 +288,13 @@ const App: React.FC = () => {
             <h1 className="text-3xl font-black text-[#FF69B4] tracking-tight">팡팡 빙고</h1>
           </div>
           <div className="flex gap-2">
+            {deferredPrompt && (
+              <button onClick={handleInstall} className="p-2 bg-white rounded-full shadow-sm text-blue-500 hover:bg-blue-50">
+                <Download size={16}/>
+              </button>
+            )}
             {user && (
-              <button onClick={() => logout()} className="p-2 bg-white rounded-full shadow-sm text-gray-400 hover:text-[#FF6B6B] transition-all">
+              <button onClick={() => logout()} className="p-2 bg-white rounded-full shadow-sm text-gray-400 hover:text-[#FF6B6B]">
                 <LogOut size={16}/>
               </button>
             )}
@@ -396,55 +352,34 @@ const App: React.FC = () => {
             )}
           </div>
         ) : status === 'idle' ? (
-          <div className="space-y-6 animate__animated animate__fadeInUp">
-            {/* PWA Install Invitation Banner */}
-            {deferredPrompt && (
-              <div className="bg-[#4D96FF] p-5 rounded-[2.5rem] shadow-[0_8px_0_#3B7EDF] border-4 border-white flex items-center justify-between gap-4 animate__animated animate__bounceIn">
-                <div className="bg-white/20 p-3 rounded-2xl">
-                  <Smartphone className="text-white" size={32} />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-white font-black text-lg leading-tight">앱으로 설치하기</h3>
-                  <p className="text-white/80 text-xs font-bold">홈 화면에 추가해서 더 편하게 즐겨요!</p>
-                </div>
-                <button 
-                  onClick={handleInstall}
-                  className="bg-white text-[#4D96FF] font-black px-4 py-2 rounded-2xl shadow-md hover:scale-105 transition-all"
-                >
-                  설치
-                </button>
-              </div>
-            )}
-
-            <div className="bg-white p-8 rounded-[3rem] shadow-[0_12px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-6">
-              <div className="flex items-center gap-4 bg-[#FFF9E3] p-4 rounded-3xl border-2 border-dashed border-[#FFD93D]">
-                 <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-16 h-16 rounded-2xl border-4 border-white shadow-md" alt="Me"/>
-                 <div className="flex-1 overflow-hidden">
-                    <p className="text-[10px] font-black text-[#FF6B6B] uppercase tracking-widest">Bingo Master</p>
-                    <p className="text-xl font-black text-gray-700 truncate">{user.displayName || user.email?.split('@')[0]}님</p>
-                 </div>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-sm font-black text-[#4D96FF] ml-2 flex items-center gap-1">
-                  <ShieldCheck size={14}/> 비밀 방 번호 (친구와 공유하세요)
-                </label>
-                <input 
-                  type="text" 
-                  value={matchId}
-                  onChange={(e) => setMatchId(e.target.value)}
-                  placeholder="예: 1234"
-                  className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl px-5 py-4 text-xl font-black focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
-                />
-              </div>
-              
-              <button 
-                onClick={startGame}
-                className="w-full py-5 bg-[#FFD93D] hover:bg-[#FFC300] text-[#4A4A4A] font-black text-2xl rounded-2xl shadow-[0_8px_0_#E5B700] transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3"
-              >
-                <Gamepad2 size={24} /> 방 입장 / 시작하기
-              </button>
+          <div className="bg-white p-8 rounded-[3rem] shadow-[0_12px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-6 animate__animated animate__fadeInUp">
+            <div className="flex items-center gap-4 bg-[#FFF9E3] p-4 rounded-3xl border-2 border-dashed border-[#FFD93D]">
+               <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-16 h-16 rounded-2xl border-4 border-white shadow-md" alt="Me"/>
+               <div className="flex-1 overflow-hidden">
+                  <p className="text-[10px] font-black text-[#FF6B6B] uppercase tracking-widest">Bingo Master</p>
+                  <p className="text-xl font-black text-gray-700 truncate">{user.displayName || user.email?.split('@')[0]}님</p>
+               </div>
             </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-black text-[#4D96FF] ml-2 flex items-center gap-1">
+                <ShieldCheck size={14}/> 비밀 방 번호 (친구와 공유하세요)
+              </label>
+              <input 
+                type="text" 
+                value={matchId}
+                onChange={(e) => setMatchId(e.target.value)}
+                placeholder="예: 1234"
+                className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl px-5 py-4 text-xl font-black focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
+              />
+            </div>
+            
+            <button 
+              onClick={startGame}
+              className="w-full py-5 bg-[#FFD93D] hover:bg-[#FFC300] text-[#4A4A4A] font-black text-2xl rounded-2xl shadow-[0_8px_0_#E5B700] transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3"
+            >
+              <Gamepad2 size={24} /> 방 입장 / 시작하기
+            </button>
           </div>
         ) : (
           <div className="space-y-4 animate__animated animate__fadeIn">
@@ -515,6 +450,7 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* Rankings Modal */}
       {showRanking && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate__animated animate__fadeIn">
           <div className="bg-white w-full max-w-sm rounded-[3rem] border-4 border-[#FFD93D] shadow-2xl p-8 relative animate__animated animate__zoomIn">
@@ -553,7 +489,7 @@ const App: React.FC = () => {
         </div>
       )}
       
-      <footer className="mt-8 text-[10px] text-gray-300 font-black tracking-[0.2em] uppercase opacity-50 text-center">
+      <footer className="mt-8 text-[10px] text-gray-300 font-black tracking-[0.2em] uppercase opacity-50">
         Friendship Bingo • Real-time Battle Mode
       </footer>
     </div>
