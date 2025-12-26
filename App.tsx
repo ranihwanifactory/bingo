@@ -18,7 +18,7 @@ import BingoBoard from './components/BingoBoard';
 import { 
   Play, MessageCircle, User as UserIcon, Users, 
   LogOut, Sparkles, BellRing, Trophy, Medal, X, 
-  LogIn, Mail, ShieldCheck, Gamepad2, Download, Smartphone, ExternalLink, AlertCircle
+  LogIn, Mail, ShieldCheck, Gamepad2, Download, Smartphone, ExternalLink, AlertCircle, Share2, Check
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -36,6 +36,7 @@ const App: React.FC = () => {
   const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
   const [showRanking, setShowRanking] = useState(false);
   const [rankings, setRankings] = useState<UserRanking[]>([]);
+  const [copyFeedback, setCopyFeedback] = useState(false);
   
   // Browser Detection
   const [isKakaoBrowser, setIsKakaoBrowser] = useState(false);
@@ -70,6 +71,13 @@ const App: React.FC = () => {
   }, [matchId, user]);
 
   useEffect(() => {
+    // Check for URL parameter 'room'
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    if (roomFromUrl) {
+      setMatchId(roomFromUrl);
+    }
+
     // Check for KakaoTalk In-App Browser
     const ua = navigator.userAgent.toLowerCase();
     if (ua.indexOf('kakaotalk') > -1) {
@@ -102,12 +110,41 @@ const App: React.FC = () => {
     const ua = navigator.userAgent.toLowerCase();
     
     if (ua.match(/android/)) {
-      // Android Chrome intent
       const intentUrl = `intent://${currentUrl.replace(/https?:\/\//i, '')}#Intent;scheme=http;package=com.android.chrome;end`;
       window.location.href = intentUrl;
     } else {
-      // iOS / Other: Use Kakao deep link to open external browser
       window.location.href = `kakaotalk://web/openExternal?url=${encodeURIComponent(currentUrl)}`;
+    }
+  };
+
+  const handleShare = async () => {
+    if (!matchId.trim()) {
+      alert("공유할 방 번호가 없어요! 🏠");
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
+    const shareData = {
+      title: '팡팡 빙고!',
+      text: `나랑 빙고 한 판 할래? 방 번호 [${matchId}] 로 들어와!`,
+      url: shareUrl,
+    };
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+      } catch (err) {
+        console.log('Share failed', err);
+      }
+    } else {
+      // Fallback: Copy to clipboard
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopyFeedback(true);
+        setTimeout(() => setCopyFeedback(false), 2000);
+      } catch (err) {
+        alert("링크 복사에 실패했어요. 주소창의 링크를 복사해주세요!");
+      }
     }
   };
 
@@ -256,7 +293,7 @@ const App: React.FC = () => {
     gameEndedRef.current = false;
     setStatus('playing');
     sounds.playJoin();
-    setCommentary("친구들을 기다리고 있어요. 방 번호를 친구에게 알려주세요!");
+    setCommentary("친구들을 기다리고 있어요. 공유 버튼을 눌러 친구를 초대하세요!");
   };
 
   const handleCellClick = (val: number) => {
@@ -288,7 +325,6 @@ const App: React.FC = () => {
     }
   };
 
-  // KakaoTalk Browser Notice Overlay
   if (isKakaoBrowser) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] p-8 text-center gap-6 animate__animated animate__fadeIn">
       <div className="w-24 h-24 bg-[#FFD93D] rounded-full flex items-center justify-center text-white shadow-lg animate__animated animate__bounceIn">
@@ -312,9 +348,6 @@ const App: React.FC = () => {
           <ExternalLink size={20}/> 외부 브라우저로 열기
         </button>
       </div>
-      <div className="flex items-center gap-2 text-gray-300 text-xs font-bold animate-pulse">
-        <Smartphone size={14} /> 자동 전환이 안 된다면 버튼을 눌러주세요.
-      </div>
     </div>
   );
 
@@ -330,6 +363,14 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col items-center py-6 px-4 bg-[#FFF9E3]">
+      {/* Toast Feedback */}
+      {copyFeedback && (
+        <div className="fixed top-10 z-[100] bg-gray-800 text-white px-6 py-3 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown">
+          <Check size={16} className="text-green-400"/>
+          <span className="font-black text-sm">초대 링크가 복사되었어요!</span>
+        </div>
+      )}
+
       <header className="text-center mb-6 w-full max-w-md">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -346,7 +387,7 @@ const App: React.FC = () => {
         </div>
         
         <button onClick={fetchRankings} className="flex items-center gap-2 mx-auto bg-white px-4 py-2 rounded-full shadow-md text-xs font-black text-[#FF8E9E] hover:scale-105 transition-all border-2 border-[#FFD93D]">
-          <Trophy size={14}/> 명예의 전당 (실시간 랭킹)
+          <Trophy size={14}/> 명예의 전당
         </button>
       </header>
 
@@ -356,31 +397,29 @@ const App: React.FC = () => {
             <div className="space-y-2">
                <div className="w-20 h-20 bg-[#FFF9E3] rounded-full mx-auto flex items-center justify-center text-5xl shadow-inner border-2 border-dashed border-[#FFD93D]">🧸</div>
                <h2 className="text-2xl font-black text-gray-700">로그인하고 시작해요!</h2>
-               <p className="text-gray-400 text-sm font-bold leading-tight">확실한 친구 구분을 위해 <br/>로그인이 꼭 필요해요.</p>
+               <p className="text-gray-400 text-sm font-bold leading-tight">로그인이 꼭 필요해요.</p>
             </div>
             
             {isEmailLogin ? (
               <form onSubmit={onEmailLogin} className="space-y-4 animate__animated animate__fadeIn">
                 <input 
-                  type="email" 
-                  placeholder="이메일" 
+                  type="email" placeholder="이메일" 
                   className="w-full bg-gray-50 border-3 border-gray-100 p-4 rounded-3xl focus:border-[#4D96FF] outline-none font-black"
                   value={email} onChange={e => setEmail(e.target.value)} required
                 />
                 <input 
-                  type="password" 
-                  placeholder="비밀번호" 
+                  type="password" placeholder="비밀번호" 
                   className="w-full bg-gray-50 border-3 border-gray-100 p-4 rounded-3xl focus:border-[#4D96FF] outline-none font-black"
                   value={password} onChange={e => setPassword(e.target.value)} required
                 />
-                <button type="submit" className="w-full py-4 bg-[#4D96FF] text-white font-black rounded-3xl shadow-[0_6px_0_#3B7EDF] active:translate-y-1 active:shadow-none transition-all">로그인 / 가입하기</button>
-                <button type="button" onClick={() => setIsEmailLogin(false)} className="text-xs text-gray-400 font-bold hover:underline">다른 방법으로 로그인하기</button>
+                <button type="submit" className="w-full py-4 bg-[#4D96FF] text-white font-black rounded-3xl shadow-[0_6px_0_#3B7EDF] active:translate-y-1 active:shadow-none transition-all">로그인 / 가입</button>
+                <button type="button" onClick={() => setIsEmailLogin(false)} className="text-xs text-gray-400 font-bold hover:underline">돌아가기</button>
               </form>
             ) : (
               <div className="space-y-3">
                 <button 
                   onClick={() => loginWithGoogle()}
-                  className="w-full py-4 bg-white border-3 border-gray-100 rounded-3xl shadow-[0_6px_0_#f0f0f0] hover:shadow-md transition-all flex items-center justify-center gap-4 group active:translate-y-1 active:shadow-none"
+                  className="w-full py-4 bg-white border-3 border-gray-100 rounded-3xl shadow-[0_6px_0_#f0f0f0] hover:shadow-md transition-all flex items-center justify-center gap-4 active:translate-y-1 active:shadow-none"
                 >
                   <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="Google"/>
                   <span className="text-lg font-black text-gray-600">Google 로그인</span>
@@ -397,22 +436,14 @@ const App: React.FC = () => {
           </div>
         ) : status === 'idle' ? (
           <div className="space-y-6 animate__animated animate__fadeInUp">
-            {/* PWA Install Invitation Banner */}
             {deferredPrompt && (
-              <div className="bg-[#4D96FF] p-5 rounded-[2.5rem] shadow-[0_8px_0_#3B7EDF] border-4 border-white flex items-center justify-between gap-4 animate__animated animate__bounceIn">
-                <div className="bg-white/20 p-3 rounded-2xl">
-                  <Smartphone className="text-white" size={32} />
+              <div className="bg-[#4D96FF] p-5 rounded-[2.5rem] shadow-[0_8px_0_#3B7EDF] border-4 border-white flex items-center justify-between gap-4">
+                <Smartphone className="text-white" size={32} />
+                <div className="flex-1 text-white">
+                  <h3 className="font-black">앱으로 설치하기</h3>
+                  <p className="text-[10px]">더 빠르게 즐겨보세요!</p>
                 </div>
-                <div className="flex-1">
-                  <h3 className="text-white font-black text-lg leading-tight">앱으로 설치하기</h3>
-                  <p className="text-white/80 text-xs font-bold">홈 화면에 추가해서 더 편하게 즐겨요!</p>
-                </div>
-                <button 
-                  onClick={handleInstall}
-                  className="bg-white text-[#4D96FF] font-black px-4 py-2 rounded-2xl shadow-md hover:scale-105 transition-all"
-                >
-                  설치
-                </button>
+                <button onClick={handleInstall} className="bg-white text-[#4D96FF] font-black px-4 py-2 rounded-2xl">설치</button>
               </div>
             )}
 
@@ -427,28 +458,35 @@ const App: React.FC = () => {
               
               <div className="space-y-2">
                 <label className="text-sm font-black text-[#4D96FF] ml-2 flex items-center gap-1">
-                  <ShieldCheck size={14}/> 비밀 방 번호 (친구와 공유하세요)
+                  <ShieldCheck size={14}/> 방 번호 (친구와 함께 맞춰요)
                 </label>
-                <input 
-                  type="text" 
-                  value={matchId}
-                  onChange={(e) => setMatchId(e.target.value)}
-                  placeholder="예: 1234"
-                  className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl px-5 py-4 text-xl font-black focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
-                />
+                <div className="flex gap-2">
+                  <input 
+                    type="text" value={matchId}
+                    onChange={(e) => setMatchId(e.target.value)}
+                    placeholder="예: 1234"
+                    className="flex-1 bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl px-5 py-4 text-xl font-black focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
+                  />
+                  <button 
+                    onClick={handleShare}
+                    className="aspect-square w-14 bg-white border-3 border-[#4D96FF] rounded-2xl flex items-center justify-center text-[#4D96FF] hover:bg-blue-50 transition-colors shadow-[0_4px_0_#3B7EDF] active:translate-y-1 active:shadow-none"
+                    title="초대 링크 복사"
+                  >
+                    <Share2 size={24} />
+                  </button>
+                </div>
               </div>
               
               <button 
                 onClick={startGame}
                 className="w-full py-5 bg-[#FFD93D] hover:bg-[#FFC300] text-[#4A4A4A] font-black text-2xl rounded-2xl shadow-[0_8px_0_#E5B700] transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3"
               >
-                <Gamepad2 size={24} /> 방 입장 / 시작하기
+                <Gamepad2 size={24} /> 게임 시작하기
               </button>
             </div>
           </div>
         ) : (
           <div className="space-y-4 animate__animated animate__fadeIn">
-            {/* Real-time Turn Indicator */}
             <div className={`p-4 rounded-3xl border-4 transition-all duration-500 flex items-center justify-between ${isMyTurn ? 'bg-[#FFEB3B]/40 border-[#FFD93D] shadow-[0_0_20px_#FFD93D] animate__animated animate__pulse animate__infinite' : 'bg-white border-gray-100 shadow-md'}`}>
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -463,10 +501,13 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="flex flex-col items-end">
-                <div className="bg-gray-100 px-3 py-1 rounded-full flex items-center gap-1 mb-2">
+                <div className="bg-gray-100 px-3 py-1 rounded-full flex items-center gap-1 mb-1">
                    <Users size={12} className="text-gray-400"/>
-                   <span className="text-[10px] font-black text-gray-500">{players.length}명 대결 중</span>
+                   <span className="text-[10px] font-black text-gray-500">{players.length}명</span>
                 </div>
+                <button onClick={handleShare} className="text-[10px] font-black text-[#4D96FF] flex items-center gap-1 hover:underline">
+                  <Share2 size={10}/> 초대하기
+                </button>
               </div>
             </div>
 
@@ -483,15 +524,16 @@ const App: React.FC = () => {
             />
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white p-4 rounded-3xl border-3 border-pink-100 flex flex-col items-center shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-8 h-8 bg-pink-50 rounded-bl-full flex items-center justify-center">🎈</div>
+              <div className="bg-white p-4 rounded-3xl border-3 border-pink-100 flex flex-col items-center shadow-sm">
                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">완성한 줄</span>
                 <span className="text-3xl font-black text-[#FF69B4]">{linesCount} / 5</span>
               </div>
-              <div className="bg-white p-4 rounded-3xl border-3 border-blue-100 flex flex-col items-center shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-8 h-8 bg-blue-50 rounded-bl-full flex items-center justify-center">🏠</div>
+              <div className="bg-white p-4 rounded-3xl border-3 border-blue-100 flex flex-col items-center shadow-sm relative group cursor-pointer" onClick={handleShare}>
                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">방 번호</span>
-                <span className="text-2xl font-black text-[#4D96FF]">{matchId}</span>
+                <span className="text-2xl font-black text-[#4D96FF] flex items-center gap-2">
+                  {matchId} <Share2 size={16} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                </span>
+                <div className="absolute top-1 right-2 text-[8px] font-black text-blue-300 opacity-0 group-hover:opacity-100">CLICK TO SHARE</div>
               </div>
             </div>
 
@@ -514,44 +556,6 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-
-      {showRanking && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate__animated animate__fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-[3rem] border-4 border-[#FFD93D] shadow-2xl p-8 relative animate__animated animate__zoomIn">
-            <button onClick={() => setShowRanking(false)} className="absolute top-6 right-6 p-2 bg-[#F0F4F8] rounded-full text-gray-400 hover:text-gray-600 transition-colors">
-              <X size={20}/>
-            </button>
-            <div className="text-center mb-6">
-              <div className="text-5xl mb-2 floating">🏅</div>
-              <h3 className="text-2xl font-black text-[#4A4A4A]">빙고 왕 순위</h3>
-              <p className="text-xs text-gray-400 font-black uppercase tracking-widest italic">Hall of Fame</p>
-            </div>
-            <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-2">
-              {rankings.map((rank, index) => (
-                <div key={rank.uid} className={`flex items-center justify-between p-3 rounded-2xl border-2 transition-all ${index === 0 ? 'bg-yellow-50 border-yellow-300 scale-105 shadow-sm' : 'bg-gray-50 border-gray-100 opacity-90'}`}>
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <img src={rank.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${rank.uid}`} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm bg-white" />
-                      <div className={`absolute -top-1 -left-1 w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] text-white ${index === 0 ? 'bg-yellow-400' : 'bg-gray-400'}`}>
-                        {index + 1}
-                      </div>
-                    </div>
-                    <p className="font-black text-[#4A4A4A] truncate max-w-[120px]">{rank.nickname}</p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xl font-black text-[#FF69B4]">{rank.wins}</span>
-                    <span className="text-[8px] font-black text-gray-400 uppercase">WINS</span>
-                  </div>
-                </div>
-              ))}
-              {rankings.length === 0 && <p className="text-center py-8 text-gray-300 font-black">아직 승리 기록이 없어요!</p>}
-            </div>
-            <button onClick={() => setShowRanking(false)} className="w-full mt-6 py-4 bg-[#FFD93D] text-[#4A4A4A] font-black rounded-2xl shadow-[0_4px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all">
-              순위표 닫기
-            </button>
-          </div>
-        </div>
-      )}
       
       <footer className="mt-8 text-[10px] text-gray-300 font-black tracking-[0.2em] uppercase opacity-50 text-center">
         Friendship Bingo • Real-time Battle Mode
