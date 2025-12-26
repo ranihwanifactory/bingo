@@ -20,7 +20,7 @@ import BingoBoard from './components/BingoBoard';
 import { 
   Gamepad2, Trophy, User as UserIcon, LogOut, 
   Sparkles, Check, Medal,
-  MessageCircle, PlusCircle, LogIn, Swords, ExternalLink, AlertCircle
+  MessageCircle, PlusCircle, LogIn, Swords, ExternalLink, AlertCircle, X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -50,12 +50,9 @@ const App: React.FC = () => {
   currentTurnIdxRef.current = currentTurnIdx;
   const gameEndedRef = useRef(false);
 
-  // 브라우저 환경 체크 (카카오톡 등 인앱 브라우저 대응)
   useEffect(() => {
     const ua = navigator.userAgent.toLowerCase();
-    const isKakao = ua.indexOf('kakaotalk') > -1;
-    const isLine = ua.indexOf('line') > -1;
-    if (isKakao || isLine) {
+    if (ua.indexOf('kakaotalk') > -1 || ua.indexOf('line') > -1) {
       setIsExternalBrowserRequired(true);
     }
   }, []);
@@ -69,6 +66,7 @@ const App: React.FC = () => {
     setPlayers([]);
     setCurrentTurnIdx(0);
     setCommentary("친구들과 함께하는 신나는 빙고 타임! 🌈");
+    gameEndedRef.current = false;
   }, []);
 
   const fetchUserStats = useCallback(async (uid: string) => {
@@ -97,7 +95,10 @@ const App: React.FC = () => {
   }, [user]);
 
   const syncState = useCallback(() => {
-    if (playersRef.current.length > 0 && playersRef.current[0].id === user?.uid) {
+    if (!matchId || !user) return;
+    const currentPs = playersRef.current;
+    // 방장(첫 번째 플레이어)만 현재 상태(마킹된 값들)를 동기화 시켜줌
+    if (currentPs.length > 0 && currentPs[0].id === user.uid) {
       const markedValues = cellsRef.current
         .filter(c => c.isMarked)
         .map(c => ({ value: c.value, senderId: c.markedBy }));
@@ -106,7 +107,7 @@ const App: React.FC = () => {
         action: 'sync_state',
         markedValues,
         currentTurnIdx: currentTurnIdxRef.current,
-        players: playersRef.current
+        players: currentPs.map(({h2hRecord, ...rest}) => rest) // 순수 정보만 전송
       });
     }
   }, [matchId, user]);
@@ -115,7 +116,7 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const roomFromUrl = params.get('room');
     if (roomFromUrl) {
-      setMatchId(roomFromUrl.toUpperCase());
+      setMatchId(roomFromUrl.toUpperCase().trim());
     }
 
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -225,12 +226,20 @@ const App: React.FC = () => {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let heartbeatInterval: any;
+
     if (status === 'playing' && matchId && user) {
-      unsubscribe = subscribeToMatch(matchId, (payload) => {
+      const cleanMatchId = matchId.trim().toUpperCase();
+      
+      unsubscribe = subscribeToMatch(cleanMatchId, (payload) => {
+        if (!payload || !payload.action) return;
+
         if (payload.action === 'join' || payload.action === 'presence') {
           const newPlayerId = payload.playerId;
           setPlayers(prev => {
-            if (prev.find(p => p.id === newPlayerId)) return prev;
+            const alreadyExists = prev.find(p => p.id === newPlayerId);
+            if (alreadyExists) return prev;
+            
             const newPlayersList = [...prev, { 
               id: newPlayerId, 
               name: payload.name, 
@@ -242,8 +251,13 @@ const App: React.FC = () => {
             fetchH2HRecords(newPlayersList);
 
             if (payload.action === 'join') {
-              publishMessage(matchId, { action: 'presence', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
-              setTimeout(syncState, 800);
+              publishMessage(cleanMatchId, { 
+                action: 'presence', 
+                playerId: user.uid, 
+                name: user.displayName || user.email?.split('@')[0], 
+                photoURL: user.photoURL 
+              });
+              setTimeout(syncState, 500);
             }
             return newPlayersList;
           });
@@ -251,10 +265,22 @@ const App: React.FC = () => {
           handleMarkAction(payload.value, payload.senderId);
         } else if (payload.action === 'sync_state') {
           if (payload.players) {
-            const syncedPlayers = payload.players.sort((a: any, b: any) => a.id.localeCompare(b.id));
-            fetchH2HRecords(syncedPlayers);
+            const syncedPlayers = payload.players.map((p: any, idx: number) => ({
+              ...p,
+              color: PLAYER_COLORS[idx % PLAYER_COLORS.length]
+            })).sort((a: any, b: any) => a.id.localeCompare(b.id));
+            
+            setPlayers(prev => {
+              // 이미 등록된 플레이어면 업데이트하지 않음 (전적 보존을 위해)
+              const existingIds = new Set(prev.map(p => p.id));
+              const newEntries = syncedPlayers.filter((p: any) => !existingIds.has(p.id));
+              if (newEntries.length === 0) return prev;
+              const combined = [...prev, ...newEntries].sort((a, b) => a.id.localeCompare(b.id));
+              fetchH2HRecords(combined);
+              return combined;
+            });
           }
-          const markedVals = payload.markedValues as {value: number, senderId: string}[];
+          const markedVals = (payload.markedValues || []) as {value: number, senderId: string}[];
           let updatedCells = [...cellsRef.current];
           markedVals.forEach(mv => {
             const idx = updatedCells.findIndex(c => c.value === mv.value);
@@ -263,13 +289,39 @@ const App: React.FC = () => {
           const { count, winningIndices } = calculateBingo(updatedCells);
           setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
           setLinesCount(count);
-          setCurrentTurnIdx(payload.currentTurnIdx);
+          if (payload.currentTurnIdx !== undefined) {
+            setCurrentTurnIdx(payload.currentTurnIdx);
+          }
         }
       });
-      // 입장 즉시 참여 알림
-      publishMessage(matchId, { action: 'join', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
+
+      // 3초마다 내가 있음을 알리는 하트비트 (상대방이 들어왔을 때 놓치지 않게 함)
+      heartbeatInterval = setInterval(() => {
+        if (playersRef.current.length < 2) {
+          publishMessage(cleanMatchId, { 
+            action: 'presence', 
+            playerId: user.uid, 
+            name: user.displayName || user.email?.split('@')[0], 
+            photoURL: user.photoURL 
+          });
+        }
+      }, 3000);
+
+      // 입장 즉시 참여 알림 (약간의 지연으로 구독 완료 대기)
+      setTimeout(() => {
+        publishMessage(cleanMatchId, { 
+          action: 'join', 
+          playerId: user.uid, 
+          name: user.displayName || user.email?.split('@')[0], 
+          photoURL: user.photoURL 
+        });
+      }, 800);
     }
-    return () => unsubscribe?.();
+    
+    return () => {
+      unsubscribe?.();
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+    };
   }, [status, matchId, user, handleMarkAction, syncState, fetchH2HRecords]);
 
   const startGame = async (forcedId?: string) => {
@@ -311,7 +363,7 @@ const App: React.FC = () => {
     if (navigator.userAgent.match(/Android/i)) {
       window.location.href = `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`;
     } else {
-      alert("오른쪽 상단 메뉴(...)를 눌러 '다른 브라우저로 열기' 또는 'Safari로 열기'를 선택해주세요!");
+      alert("오른쪽 상단 메뉴(...)를 눌러 '다른 브라우저로 열기'를 선택해주세요!");
     }
   };
 
@@ -322,15 +374,14 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset overflow-hidden">
-      {/* 카카오톡 등 인앱 브라우저 안내 */}
       {isExternalBrowserRequired && (
         <div className="bg-[#4D96FF] text-white p-3 flex items-center justify-between animate__animated animate__fadeInDown z-[100]">
           <div className="flex items-center gap-2">
             <AlertCircle size={18} />
-            <span className="text-xs font-black">더 원활한 게임을 위해 전용 브라우저로 즐겨요!</span>
+            <span className="text-xs font-black">브라우저에서 즐기시면 더 안정적이에요!</span>
           </div>
           <button onClick={openInChrome} className="bg-white text-[#4D96FF] px-3 py-1 rounded-full text-[10px] font-black flex items-center gap-1 shadow-sm">
-            <ExternalLink size={12} /> 브라우저로 열기
+            <ExternalLink size={12} /> 열기
           </button>
         </div>
       )}
@@ -338,7 +389,6 @@ const App: React.FC = () => {
       {copyFeedback && <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown"><Check size={14} className="text-green-400"/><span className="font-black text-xs">초대 링크 복사 완료!</span></div>}
 
       <main className="flex-1 flex flex-col items-center w-full max-w-md mx-auto relative px-4">
-        
         {activeTab === 'game' && (
           <div className="w-full h-full flex flex-col animate__animated animate__fadeIn py-4">
             {!user ? (
@@ -348,9 +398,9 @@ const App: React.FC = () => {
                   <h2 className="text-4xl font-black text-[#FF69B4] tracking-tighter">팡팡 빙고!</h2>
                   <p className="text-gray-400 font-bold">친구들과 실시간으로 즐겨요!</p>
                 </div>
-                <button onClick={() => loginWithGoogle()} className="w-full py-5 bg-white border-4 border-[#FFD93D] rounded-[2rem] shadow-[0_8px_0_#FFD93D] flex items-center justify-center gap-4 transition-all active:translate-y-1 active:shadow-none">
+                <button onClick={() => loginWithGoogle()} className="w-full py-5 bg-white border-4 border-[#FFD93D] rounded-[2rem] shadow-[0_8px_0_#FFD93D] flex items-center justify-center gap-4 transition-all active:translate-y-1">
                   <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="G"/>
-                  <span className="text-xl font-black">Google로 시작하기</span>
+                  <span className="text-xl font-black">시작하기</span>
                 </button>
               </div>
             ) : status === 'idle' ? (
@@ -360,52 +410,30 @@ const App: React.FC = () => {
                     <div className="text-6xl floating inline-block">🏰</div>
                     <h2 className="text-3xl font-black text-[#FF69B4]">게임 로비</h2>
                   </div>
-
                   <div className="space-y-4">
-                    <button onClick={createNewGame} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2">
-                      <PlusCircle size={24} /> 방 만들기
-                    </button>
-
+                    <button onClick={createNewGame} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#E5B700] active:translate-y-1">방 만들기</button>
                     <div className="flex items-center gap-3">
                       <div className="flex-1 h-[2px] bg-gray-100"></div>
                       <span className="text-xs font-black text-gray-300">또는</span>
                       <div className="flex-1 h-[2px] bg-gray-100"></div>
                     </div>
-
                     <div className="space-y-3">
                       <div className="relative">
-                        <input 
-                          type="text" 
-                          value={matchId} 
-                          onChange={(e)=>setMatchId(e.target.value.toUpperCase())} 
-                          placeholder="방 번호 입력" 
-                          className={`w-full bg-[#F0F7FF] border-4 rounded-[1.5rem] p-4 text-center text-2xl font-black outline-none placeholder:text-gray-300 transition-colors ${matchId ? 'border-[#4D96FF]' : 'border-gray-100'}`} 
-                        />
-                        {matchId && (
-                           <button onClick={()=>setMatchId('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 font-black">X</button>
-                        )}
+                        <input type="text" value={matchId} onChange={(e)=>setMatchId(e.target.value.toUpperCase())} placeholder="방 번호 입력" className="w-full bg-[#F0F7FF] border-4 rounded-[1.5rem] p-4 text-center text-2xl font-black outline-none border-[#4D96FF]" />
+                        {matchId && <button onClick={()=>setMatchId('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400"><X size={20}/></button>}
                       </div>
-                      <button 
-                        onClick={() => startGame()} 
-                        className={`w-full py-5 text-white font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#2B66CC] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2 ${matchId ? 'bg-[#4D96FF]' : 'bg-gray-300 shadow-none grayscale cursor-not-allowed'}`}
-                      >
-                        <LogIn size={24} /> 입장하기
-                      </button>
+                      <button onClick={() => startGame()} className="w-full py-5 bg-[#4D96FF] text-white font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#2B66CC] active:translate-y-1">입장하기</button>
                     </div>
                   </div>
                 </div>
               </div>
             ) : (
               <div className="flex-1 flex flex-col">
-                {/* 상단 플레이어 리스트 */}
                 <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide px-1">
                   {players.map((p, idx) => (
-                    <div 
-                      key={p.id}
-                      className={`flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-2xl border-2 transition-all duration-300 ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-lg scale-105 z-10' : 'bg-white/50 border-transparent opacity-60'}`}
-                    >
+                    <div key={p.id} className={`flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-2xl border-2 transition-all ${currentTurnIdx === idx ? 'bg-white border-[#FFD93D] shadow-lg scale-105 z-10' : 'bg-white/50 border-transparent opacity-60'}`}>
                       <div className="relative">
-                        <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm" style={{ backgroundColor: p.color }} />
+                        <img src={p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.id}`} className="w-10 h-10 rounded-xl border-2 border-white" style={{ backgroundColor: p.color }} />
                         {currentTurnIdx === idx && <div className="absolute -top-1 -right-1 bg-[#FFD93D] rounded-full p-0.5 animate-pulse"><Sparkles size={10} className="text-white" fill="white" /></div>}
                       </div>
                       <span className="text-[10px] font-black">{p.id === user?.uid ? "나" : p.name}</span>
@@ -420,42 +448,32 @@ const App: React.FC = () => {
                     </button>
                   )}
                 </div>
-
-                {/* 게임 현황판 */}
                 <div className="bg-white rounded-[2rem] p-4 mb-4 border-4 border-gray-50 shadow-sm flex items-center justify-between">
                    <div className="flex flex-col">
                      <span className="text-[10px] font-black text-gray-300 uppercase">ROOM: {matchId}</span>
-                     <div className="flex items-center gap-1">
-                        <p className="text-base font-black text-gray-700">
-                          {players.length < 2 ? "친구를 기다려요..." : (isMyTurn ? <span className="text-[#FF69B4] animate-pulse">내 차례! 🍎</span> : <span>{activePlayer?.name} 차례</span>)}
-                        </p>
-                     </div>
+                     <p className="text-base font-black text-gray-700">
+                       {players.length < 2 ? "친구를 기다려요..." : (isMyTurn ? <span className="text-[#FF69B4] animate-pulse">내 차례! 🍎</span> : <span>{activePlayer?.name} 차례</span>)}
+                     </p>
                    </div>
                    <div className="bg-[#FFF0F6] px-6 py-2 rounded-2xl border-2 border-pink-100 flex flex-col items-center">
                       <span className="text-[10px] font-black text-pink-300 uppercase">LINES</span>
-                      <span className="text-2xl font-black text-[#FF69B4] leading-none">{linesCount} / 5</span>
+                      <span className="text-2xl font-black text-[#FF69B4]">{linesCount} / 5</span>
                    </div>
                 </div>
-
-                {/* AI 말풍선 */}
                 <div className="mb-4 bg-white/80 backdrop-blur-sm p-3 rounded-[1.5rem] border-2 border-dashed border-[#FFD93D] flex items-center gap-3">
                   <div className="bg-[#FFD93D] p-2 rounded-full text-white flex-shrink-0"><MessageCircle size={16} fill="white" /></div>
                   <p className="text-xs font-bold text-gray-500 italic truncate">"{commentary}"</p>
                 </div>
-
-                {/* 빙고판 */}
                 <div className="flex-1 flex items-center justify-center pb-20">
                   <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={players.reduce((acc,p)=>({...acc, [p.id]:p.color}), {})} />
                 </div>
-
-                {/* 우승 팝업 */}
                 {status === 'won' && (
                    <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/20 backdrop-blur-sm p-6">
                      <div className="bg-white w-full p-8 rounded-[3rem] border-8 border-[#FFD93D] text-center animate__animated animate__jackInTheBox shadow-2xl">
                        <div className="text-6xl mb-2">🏆</div>
                        <h3 className="text-3xl font-black text-[#FF69B4] mb-1">BINGO!</h3>
                        <p className="font-bold text-gray-500 mb-6">{activePlayer?.name}님이 승리했어요!</p>
-                       <button onClick={()=>setStatus('idle')} className="w-full py-4 bg-[#FFD93D] rounded-2xl font-black text-xl shadow-[0_6px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all">확인</button>
+                       <button onClick={()=>setStatus('idle')} className="w-full py-4 bg-[#FFD93D] rounded-2xl font-black text-xl shadow-[0_6px_0_#E5B700]">확인</button>
                      </div>
                    </div>
                 )}
@@ -463,7 +481,6 @@ const App: React.FC = () => {
             )}
           </div>
         )}
-
         {activeTab === 'rank' && (
           <div className="w-full flex-1 p-4 flex flex-col animate__animated animate__fadeIn">
             <h2 className="text-3xl font-black text-center mb-6 text-[#FF69B4]">🏆 명예의 전당</h2>
@@ -478,11 +495,9 @@ const App: React.FC = () => {
                   <p className="text-2xl font-black text-[#FF69B4]">{r.wins}<span className="text-[10px] ml-1">WINS</span></p>
                 </div>
               ))}
-              {rankings.length === 0 && <div className="text-center py-20 text-gray-300 font-bold">랭킹 데이터가 없어요!</div>}
             </div>
           </div>
         )}
-
         {activeTab === 'profile' && (
           <div className="w-full flex-1 flex flex-col items-center justify-center animate__animated animate__fadeIn pb-24">
             {user ? (
@@ -508,7 +523,6 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-
       {user && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t-4 border-gray-50 flex justify-around items-center px-6 pb-8 pt-4 z-50 rounded-t-[3rem] shadow-2xl">
           <NavButton active={activeTab==='game'} icon={<Gamepad2 size={28}/>} label="빙고" onClick={()=>setActiveTab('game')} />
