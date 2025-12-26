@@ -3,7 +3,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>우당탕탕! 팡팡 빙고</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#FFCFEE">
@@ -14,21 +14,24 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Jua&family=Nanum+Pen+Script&display=swap');
         
         body {
             font-family: 'Jua', sans-serif;
             background: #FFF9E3;
             color: #4A4A4A;
-            overflow: hidden;
+            overflow-x: hidden;
             -webkit-tap-highlight-color: transparent;
             user-select: none;
-            touch-action: manipulation;
         }
 
         .game-font { font-family: 'Jua', sans-serif; }
         .bubble-shadow { box-shadow: 0 8px 0 rgba(0,0,0,0.1); }
         
+        .pop-animation {
+            animation: bounceIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
         @keyframes float {
             0% { transform: translateY(0px); }
             50% { transform: translateY(-10px); }
@@ -36,23 +39,21 @@
         }
         .floating { animation: float 3s ease-in-out infinite; }
 
-        .safe-area-inset {
-            padding-bottom: env(safe-area-inset-bottom);
+        .bingo-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
         }
 
-        /* 텍스트 드래그 방지 및 모바일 최적화 */
-        * {
-            -webkit-user-drag: none;
-            -webkit-touch-callout: none;
-        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #FFD93D; border-radius: 10px; }
     </style>
     <script>
-      // Service Worker 등록 오류가 전체 앱을 멈추지 않도록 처리
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js')
-            .then(reg => console.log('SW registered'))
-            .catch(err => console.log('SW registration failed:', err));
+          navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
         });
       }
     </script>
@@ -72,7 +73,6 @@
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>
