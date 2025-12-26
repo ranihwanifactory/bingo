@@ -46,7 +46,6 @@ const App: React.FC = () => {
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [isExternalBrowserRequired, setIsExternalBrowserRequired] = useState(false);
 
-  // 실시간 통신을 위한 가변 상태 참조용 Refs
   const playersRef = useRef<PlayerInfo[]>([]);
   playersRef.current = players;
   const cellsRef = useRef<BingoCell[]>([]);
@@ -60,6 +59,7 @@ const App: React.FC = () => {
     if (ua.indexOf('kakaotalk') > -1 || ua.indexOf('line') > -1) {
       setIsExternalBrowserRequired(true);
     }
+    getTopRankings(10).then(setRankings);
   }, []);
 
   const resetAllState = useCallback(() => {
@@ -79,12 +79,12 @@ const App: React.FC = () => {
     const lines: number[][] = [];
     for (let i = 0; i < size; i++) {
       const row = Array.from({ length: size }, (_, j) => i * size + j);
-      if (row.every(idx => board[idx].isMarked)) lines.push(row);
+      if (row.every(idx => board[idx] && board[idx].isMarked)) lines.push(row);
       const col = Array.from({ length: size }, (_, j) => j * size + i);
-      if (col.every(idx => board[idx].isMarked)) lines.push(col);
+      if (col.every(idx => board[idx] && board[idx].isMarked)) lines.push(col);
     }
     const d1 = [0, 6, 12, 18, 24], d2 = [4, 8, 12, 16, 20];
-    if (d1.every(idx => board[idx].isMarked)) lines.push(d1);
+    if (d1.every(idx => board[idx] && board[idx].isMarked)) lines.push(d1);
     if (d2.every(idx => board[idx].isMarked)) lines.push(d2);
     return { count: lines.length, winningIndices: new Set(lines.flat()) };
   };
@@ -115,13 +115,12 @@ const App: React.FC = () => {
   }, []);
 
   const startGame = useCallback(async (forcedId?: string) => {
-    const idToUse = (forcedId || matchId || '').trim().toUpperCase();
-    if (!idToUse) return;
+    // forcedId가 없으면 matchId를 쓰고, 그것도 없으면 새로 생성함
+    const idToUse = (forcedId || matchId || generateRoomId()).trim().toUpperCase();
     
     setMatchId(idToUse);
     
-    // Guest로 입장하는 경우(forcedId가 있는 경우) 처음엔 빈 판으로 시작 (Host로부터 데이터를 받음)
-    // Host로 직접 방을 만드는 경우에만 새로운 랜덤 보드 생성
+    // 초대받아 들어온 경우(forcedId가 있는 경우) 처음엔 보드 없이 시작해서 Host 정보를 기다림
     const isHost = !forcedId; 
     const initialBoard = isHost ? generateRandomBoard() : [];
     
@@ -139,14 +138,16 @@ const App: React.FC = () => {
     setActiveTab('game');
     sounds.playJoin();
 
-    if (!isHost) setCommentary("방장으로부터 빙고판을 불러오고 있어요... 🔄");
+    if (!isHost) {
+      setCommentary("방장으로부터 빙고판을 불러오고 있어요... 🔄");
+    }
   }, [matchId]);
 
   const syncStateToOthers = useCallback(() => {
     if (!matchId || !user) return;
     const currentPs = playersRef.current;
     
-    // 방장(첫 번째 플레이어)만 현재의 보드와 마킹 정보를 동기화 신호로 보냄
+    // 방장(목록의 첫 번째)만 현재의 보드와 정보를 동기화용으로 전송
     if (currentPs.length > 0 && currentPs[0].id === user.uid) {
       const markedValues = cellsRef.current
         .filter(c => c.isMarked)
@@ -218,9 +219,8 @@ const App: React.FC = () => {
         setUser(u);
         await updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고술사", u.photoURL || "");
         fetchUserStats(u.uid);
-        if (roomFromUrl) {
-          // URL을 통해 들어온 경우 0.5초 대기 후 자동 입장 (인증 안정화 시간)
-          setTimeout(() => startGame(roomFromUrl.toUpperCase().trim()), 500);
+        if (roomFromUrl && status === 'idle') {
+          setTimeout(() => startGame(roomFromUrl.toUpperCase().trim()), 800);
         }
       } else {
         setUser(null);
@@ -253,37 +253,36 @@ const App: React.FC = () => {
               name: payload.name, 
               photoURL: payload.photoURL,
               color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] 
-            }].sort((a, b) => a.id.localeCompare(b.id)); // ID 기준 정렬로 방장 우선권 유지
+            }].sort((a, b) => a.id.localeCompare(b.id)); 
             
             sounds.playJoin();
             fetchH2HRecords(newPlayersList);
 
-            // 내가 기존 참여자이고, 누군가 join 했다면 내 정보와 판 정보를 다시 쏴줌 (Handshake)
             if (payload.action === 'join') {
+              // 새로 들어온 친구에게 나를 알리고 판 상태 전송
               publishMessage(cleanMatchId, { 
                 action: 'presence', 
                 playerId: user.uid, 
                 name: user.displayName || user.email?.split('@')[0], 
                 photoURL: user.photoURL 
               });
-              setTimeout(syncStateToOthers, 500);
+              setTimeout(syncStateToOthers, 600);
             }
             return newPlayersList;
           });
         } else if (payload.action === 'mark') {
           handleMarkAction(payload.value, payload.senderId);
         } else if (payload.action === 'sync_state') {
-          // 방장으로부터 보드 데이터를 받았을 때 (게스트 전용 로직)
-          if (payload.boardValues && payload.boardValues.length === 25 && cellsRef.current.length === 0) {
+          // 게스트가 방장으로부터 데이터를 받는 시점
+          if (payload.boardValues && payload.boardValues.length === 25 && (cellsRef.current.length === 0 || cellsRef.current.every(c => !c.value))) {
             setCells(payload.boardValues.map((v: number) => ({
               value: v,
               isMarked: false,
               isWinningCell: false
             })));
-            setCommentary("방장과 연결되었어요! 게임 시작! 🎮");
+            setCommentary("빙고판을 성공적으로 받아왔어요! 🍀");
           }
 
-          // 플레이어 목록 동기화
           if (payload.players) {
             const syncedPlayers = payload.players.map((p: any, idx: number) => ({
               ...p,
@@ -301,23 +300,24 @@ const App: React.FC = () => {
             });
           }
           
-          // 이미 마킹된 숫자들 복원
           setTimeout(() => {
             const markedVals = (payload.markedValues || []) as {value: number, senderId: string}[];
             let updatedCells = [...cellsRef.current];
-            markedVals.forEach(mv => {
-              const idx = updatedCells.findIndex(c => c.value === mv.value);
-              if (idx !== -1) updatedCells[idx] = { ...updatedCells[idx], isMarked: true, markedBy: mv.senderId };
-            });
-            const { count, winningIndices } = calculateBingo(updatedCells);
-            setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
-            setLinesCount(count);
-            if (payload.currentTurnIdx !== undefined) setCurrentTurnIdx(payload.currentTurnIdx);
-          }, 200);
+            if (updatedCells.length === 25) {
+              markedVals.forEach(mv => {
+                const idx = updatedCells.findIndex(c => c.value === mv.value);
+                if (idx !== -1) updatedCells[idx] = { ...updatedCells[idx], isMarked: true, markedBy: mv.senderId };
+              });
+              const { count, winningIndices } = calculateBingo(updatedCells);
+              setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
+              setLinesCount(count);
+              if (payload.currentTurnIdx !== undefined) setCurrentTurnIdx(payload.currentTurnIdx);
+            }
+          }, 300);
         }
       });
 
-      // 생존 신고(Heartbeat): 혼자 방에서 기다릴 때 2초마다 나를 방송함
+      // Heartbeat: 2.5초마다 나를 알려서 늦게 온 친구도 나를 찾을 수 있게 함
       heartbeatInterval = setInterval(() => {
         if (playersRef.current.length < 2) {
           publishMessage(cleanMatchId, { 
@@ -327,9 +327,9 @@ const App: React.FC = () => {
             photoURL: user.photoURL 
           });
         }
-      }, 2000);
+      }, 2500);
 
-      // 입장 즉시 참여 알림 (지연을 두어 SSE 채널 확보)
+      // 입장 신호 (지연을 두어 채널이 열릴 때까지 대기)
       setTimeout(() => {
         publishMessage(cleanMatchId, { 
           action: 'join', 
@@ -393,9 +393,6 @@ const App: React.FC = () => {
     }
   };
 
-  const activePlayer = players[currentTurnIdx];
-  const isMyTurn = activePlayer?.id === user?.uid;
-
   if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] font-black text-[#FFD93D] gap-4"><div className="animate-spin text-5xl">🧸</div><p>팡팡 빙고 입장 중...</p></div>;
 
   return (
@@ -437,7 +434,8 @@ const App: React.FC = () => {
                     <h2 className="text-3xl font-black text-[#FF69B4]">게임 로비</h2>
                   </div>
                   <div className="space-y-4">
-                    <button onClick={() => startGame()} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#E5B700] active:translate-y-1">방 만들기</button>
+                    {/* FIX: 방 만들기 클릭 시 generationRoomId()를 직접 호출하여 matchId가 비어있는 현상 해결 */}
+                    <button onClick={() => startGame(generateRoomId())} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#E5B700] active:translate-y-1">방 만들기</button>
                     <div className="flex items-center gap-3">
                       <div className="flex-1 h-[2px] bg-gray-100"></div>
                       <span className="text-xs font-black text-gray-300">또는</span>
@@ -478,7 +476,7 @@ const App: React.FC = () => {
                    <div className="flex flex-col">
                      <span className="text-[10px] font-black text-gray-300 uppercase">ROOM: {matchId}</span>
                      <p className="text-base font-black text-gray-700">
-                       {players.length < 2 ? "친구를 기다려요..." : (isMyTurn ? <span className="text-[#FF69B4] animate-pulse">내 차례! 🍎</span> : <span>{activePlayer?.name} 차례</span>)}
+                       {players.length < 2 ? "친구를 기다려요..." : (players[currentTurnIdx]?.id === user?.uid ? <span className="text-[#FF69B4] animate-pulse">내 차례! 🍎</span> : <span>{players[currentTurnIdx]?.name} 차례</span>)}
                      </p>
                    </div>
                    <div className="bg-[#FFF0F6] px-6 py-2 rounded-2xl border-2 border-pink-100 flex flex-col items-center">
@@ -491,14 +489,14 @@ const App: React.FC = () => {
                   <p className="text-xs font-bold text-gray-500 italic truncate">"{commentary}"</p>
                 </div>
                 <div className="flex-1 flex items-center justify-center pb-20">
-                  {cells.length > 0 ? (
+                  {cells.length > 0 && cells[0].value ? (
                     <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={players.reduce((acc,p)=>({...acc, [p.id]:p.color}), {})} />
                   ) : (
                     <div className="flex flex-col items-center gap-4 animate-pulse">
                       <div className="w-64 h-64 bg-white/50 rounded-[2rem] border-4 border-dashed border-gray-200 flex items-center justify-center">
                         <span className="text-4xl">🔎</span>
                       </div>
-                      <p className="font-black text-gray-400">방장의 정보를 기다리는 중...</p>
+                      <p className="font-black text-gray-400 text-center">방장의 빙고판 정보를<br/>기다리고 있어요...</p>
                     </div>
                   )}
                 </div>
@@ -507,7 +505,7 @@ const App: React.FC = () => {
                      <div className="bg-white w-full p-8 rounded-[3rem] border-8 border-[#FFD93D] text-center animate__animated animate__jackInTheBox shadow-2xl">
                        <div className="text-6xl mb-2">🏆</div>
                        <h3 className="text-3xl font-black text-[#FF69B4] mb-1">BINGO!</h3>
-                       <p className="font-bold text-gray-500 mb-6">{activePlayer?.name}님이 승리했어요!</p>
+                       <p className="font-bold text-gray-500 mb-6">{players[currentTurnIdx]?.name}님이 승리했어요!</p>
                        <button onClick={()=>setStatus('idle')} className="w-full py-4 bg-[#FFD93D] rounded-2xl font-black text-xl shadow-[0_6px_0_#E5B700]">확인</button>
                      </div>
                    </div>
