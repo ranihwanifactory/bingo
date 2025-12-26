@@ -1,5 +1,6 @@
+
 {
-  "name": "Neon AI Bingo",
-  "description": "A dynamic 5x5 Bingo game with AI-powered theme generation, featuring neon aesthetics and interactive animations.",
+  "name": "우당탕탕! 팡팡 빙고",
+  "description": "친구들과 한 자리에서 즐기는 대형 5x5 로컬 멀티플레이 빙고 게임",
   "requestFramePermissions": []
 }
