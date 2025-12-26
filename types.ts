@@ -3,7 +3,7 @@ export interface BingoCell {
   value: number;
   isMarked: boolean;
   isWinningCell: boolean;
-  markedBy?: string; // 누가 이 숫자를 눌렀는지 (플레이어 ID)
+  markedBy?: string;
 }
 
 export type GameStatus = 'idle' | 'playing' | 'won';
@@ -12,4 +12,10 @@ export interface PlayerInfo {
   id: string;
   name: string;
   color: string;
+}
+
+export interface UserRanking {
+  uid: string;
+  nickname: string;
+  wins: number;
 }

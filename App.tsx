@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BingoCell, GameStatus, PlayerInfo } from './types';
+import { BingoCell, GameStatus, PlayerInfo, UserRanking } from './types';
 import { generateSeededBoard, getAICommentary } from './services/geminiService';
 import { publishMessage, subscribeToMatch } from './services/syncService';
 import { sounds } from './services/soundService';
+import { loginAnonymously, updateUserInfo, recordWin, getTopRankings, auth } from './services/firebaseService';
 import BingoBoard from './components/BingoBoard';
-import { Play, MessageCircle, User, Users, Download, PartyPopper, LogOut, Sparkles, BellRing } from 'lucide-react';
+import { Play, MessageCircle, User as UserIcon, Users, Download, PartyPopper, LogOut, Sparkles, BellRing, Trophy, Medal, X } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const PLAYER_COLORS = ['#FF6B6B', '#4D96FF', '#6BCB77', '#FFD93D', '#917FB3', '#FF9F43'];
@@ -19,21 +20,28 @@ const App: React.FC = () => {
   const [commentary, setCommentary] = useState<string>("친구랑 같이 모여서 즐거운 빙고 한 판! 🎈");
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
-  const [myId] = useState(() => {
-    let id = localStorage.getItem('bingo_player_id');
-    if (!id) {
-      id = 'U-' + Math.random().toString(36).substr(2, 4).toUpperCase();
-      localStorage.setItem('bingo_player_id', id);
-    }
-    return id;
-  });
+  const [showRanking, setShowRanking] = useState(false);
+  const [rankings, setRankings] = useState<UserRanking[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   const cellsRef = useRef<BingoCell[]>([]);
   cellsRef.current = cells;
   const playersRef = useRef<PlayerInfo[]>([]);
   playersRef.current = players;
-  const turnIdxRef = useRef(0);
-  turnIdxRef.current = currentTurnIdx;
+  const gameEndedRef = useRef(false);
+
+  useEffect(() => {
+    // Firebase 익명 로그인
+    loginAnonymously().then(cred => {
+      setCurrentUser(cred.user);
+    }).catch(err => console.error("Firebase Login Error", err));
+  }, []);
+
+  const fetchRankings = async () => {
+    const data = await getTopRankings(5);
+    setRankings(data);
+    setShowRanking(true);
+  };
 
   const calculateBingo = (board: BingoCell[]) => {
     const size = 5;
@@ -55,7 +63,6 @@ const App: React.FC = () => {
     const targetCell = currentCells.find(c => c.value === value);
     if (!targetCell || targetCell.isMarked) return;
 
-    // 효과음 재생
     sounds.playPop();
 
     const newCells = currentCells.map(cell => 
@@ -71,9 +78,8 @@ const App: React.FC = () => {
     setCells(finalCells);
     setCurrentTurnIdx(nextTurnIdx);
     
-    // 내 차례가 되었을 때 알림음
     const nextPlayer = playersRef.current[nextTurnIdx];
-    if (nextPlayer?.id === myId) {
+    if (nextPlayer?.id === currentUser?.uid) {
       sounds.playTurn();
     }
 
@@ -82,12 +88,19 @@ const App: React.FC = () => {
       updateAICommentary(count);
     }
     setLinesCount(count);
-    if (count >= 5) {
+
+    if (count >= 5 && !gameEndedRef.current) {
+      gameEndedRef.current = true;
       setStatus('won');
       sounds.playWin();
       confetti({ particleCount: 200, spread: 80, origin: { y: 0.6 } });
+      
+      // 승리한 사람이 나일 경우에만 DB 업데이트
+      if (senderId === currentUser?.uid) {
+        recordWin(currentUser.uid).catch(console.error);
+      }
     }
-  }, [linesCount, myId]);
+  }, [linesCount, currentUser]);
 
   const updateAICommentary = async (count: number) => {
     const isWinner = count >= 5;
@@ -97,7 +110,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-    if (status === 'playing' && matchId) {
+    if (status === 'playing' && matchId && currentUser) {
       unsubscribe = subscribeToMatch(matchId, (payload) => {
         if (payload.action === 'join' || payload.action === 'presence') {
           setPlayers(prev => {
@@ -107,7 +120,7 @@ const App: React.FC = () => {
               .sort((a, b) => a.id.localeCompare(b.id));
             
             if (payload.action === 'join') {
-              publishMessage(matchId, { action: 'presence', playerId: myId, name: nickname });
+              publishMessage(matchId, { action: 'presence', playerId: currentUser.uid, name: nickname });
             }
             return newPlayers;
           });
@@ -115,21 +128,26 @@ const App: React.FC = () => {
           applyRemoteMark(payload.value, payload.nextTurnIdx, payload.senderId);
         }
       });
-      publishMessage(matchId, { action: 'join', playerId: myId, name: nickname });
+      publishMessage(matchId, { action: 'join', playerId: currentUser.uid, name: nickname });
     }
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [status, matchId, myId, nickname, applyRemoteMark]);
+  }, [status, matchId, currentUser, nickname, applyRemoteMark]);
 
-  const startGame = () => {
+  const startGame = async () => {
     if (!nickname.trim()) return alert("친구들이 부를 이름을 알려주세요! 😊");
     if (!matchId.trim()) return alert("같이 할 방 번호를 적어주세요! 🏠");
+    if (!currentUser) return alert("잠시만 기다려주세요! (로그인 중)");
+    
     localStorage.setItem('bingo_nickname', nickname);
+    await updateUserInfo(currentUser.uid, nickname);
+
     const values = generateSeededBoard(matchId.trim().toLowerCase());
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
-    setPlayers([{ id: myId, name: nickname, color: PLAYER_COLORS[0] }]);
+    setPlayers([{ id: currentUser.uid, name: nickname, color: PLAYER_COLORS[0] }]);
+    gameEndedRef.current = false;
     setStatus('playing');
     sounds.playJoin();
     setCommentary(`${nickname} 친구 반가워요! 게임을 시작해볼까요?`);
@@ -137,7 +155,7 @@ const App: React.FC = () => {
 
   const handleCellClick = (val: number) => {
     if (status !== 'playing') return;
-    const isMyTurn = players.length > 0 && players[currentTurnIdx]?.id === myId;
+    const isMyTurn = players.length > 0 && players[currentTurnIdx]?.id === currentUser?.uid;
     if (!isMyTurn) {
       setCommentary("지금은 친구 차례예요! 조금만 기다려줄래요? 🙏");
       return;
@@ -146,12 +164,12 @@ const App: React.FC = () => {
     if (target?.isMarked) return;
 
     const nextTurnIdx = (currentTurnIdx + 1) % players.length;
-    publishMessage(matchId, { action: 'mark', value: val, nextTurnIdx, senderId: myId });
-    applyRemoteMark(val, nextTurnIdx, myId);
+    publishMessage(matchId, { action: 'mark', value: val, nextTurnIdx, senderId: currentUser.uid });
+    applyRemoteMark(val, nextTurnIdx, currentUser.uid);
   };
 
   const currPlayer = players[currentTurnIdx];
-  const isMyTurn = currPlayer?.id === myId;
+  const isMyTurn = currPlayer?.id === currentUser?.uid;
   const playerColorsMap = players.reduce((acc, p) => ({ ...acc, [p.id]: p.color }), {});
 
   return (
@@ -164,9 +182,9 @@ const App: React.FC = () => {
           </h1>
           <Sparkles className="text-[#FFD93D] animate-pulse" fill="#FFD93D"/>
         </div>
-        <div className="flex justify-center items-center gap-2">
-           <span className="text-[10px] font-bold text-[#FF8E9E] tracking-widest uppercase bg-white px-3 py-1 rounded-full shadow-sm">Play with friends!</span>
-        </div>
+        <button onClick={fetchRankings} className="flex items-center gap-1 mx-auto bg-white px-3 py-1 rounded-full shadow-sm text-[10px] font-bold text-[#FF8E9E] hover:scale-105 transition-transform">
+          <Trophy size={12}/> 명예의 전당 보기
+        </button>
       </header>
 
       <main className="w-full max-w-md">
@@ -180,7 +198,7 @@ const App: React.FC = () => {
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-black text-[#FF6B6B] ml-2 flex items-center gap-1">
-                  <User size={14}/> 내 이름 (별명)
+                  <UserIcon size={14}/> 내 이름 (별명)
                 </label>
                 <input 
                   type="text" 
@@ -210,17 +228,9 @@ const App: React.FC = () => {
             >
               <Play fill="currentColor" size={24} /> 게임 시작하기!
             </button>
-
-            <button 
-              onClick={() => window.dispatchEvent(new Event('beforeinstallprompt'))}
-              className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
-            >
-              <Download size={14} /> 우리집 화면에 앱 설치하기
-            </button>
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Turn Card */}
             <div className={`p-4 rounded-3xl border-4 transition-all duration-300 flex items-center justify-between ${isMyTurn ? 'bg-[#FFEB3B]/30 border-[#FFD93D] my-turn-active animate__animated animate__pulse animate__infinite' : 'bg-white border-gray-100 shadow-md'}`}>
               <div className="flex items-center gap-3">
                 <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg transform transition-transform ${isMyTurn ? 'rotate-12 scale-110' : ''}`} style={{ backgroundColor: currPlayer?.color }}>
@@ -251,36 +261,32 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="relative">
-              <div className="bg-white p-4 rounded-2xl border-2 border-[#FFD93D] text-sm font-bold text-gray-600 flex gap-3 items-center shadow-sm">
-                <div className="bg-[#FFF9E3] p-2 rounded-xl"><MessageCircle size={20} className="text-[#FFD93D]"/></div>
-                <p className="flex-1 italic leading-tight">"{commentary}"</p>
-              </div>
+            <div className="bg-white p-4 rounded-2xl border-2 border-[#FFD93D] text-sm font-bold text-gray-600 flex gap-3 items-center shadow-sm relative">
+              <div className="bg-[#FFF9E3] p-2 rounded-xl"><MessageCircle size={20} className="text-[#FFD93D]"/></div>
+              <p className="flex-1 italic leading-tight">"{commentary}"</p>
             </div>
 
-            <div className={`transition-transform duration-300 ${isMyTurn ? 'scale-[1.02]' : 'scale-100'}`}>
-              <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={playerColorsMap} />
-            </div>
+            <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={playerColorsMap} />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-white p-4 rounded-3xl border-3 border-pink-100 flex flex-col items-center shadow-sm overflow-hidden relative">
                 <div className="absolute top-0 right-0 w-8 h-8 bg-pink-50 rounded-bl-full flex items-center justify-center">🎉</div>
-                <span className="text-[10px] font-black text-gray-400 uppercase">My Bingo</span>
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">My Bingo</span>
                 <span className="text-3xl font-black text-[#FF69B4]">{linesCount} / 5</span>
               </div>
               <div className="bg-white p-4 rounded-3xl border-3 border-blue-100 flex flex-col items-center shadow-sm overflow-hidden relative">
                 <div className="absolute top-0 right-0 w-8 h-8 bg-blue-50 rounded-bl-full flex items-center justify-center">🔑</div>
-                <span className="text-[10px] font-black text-gray-400 uppercase">Room Code</span>
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">Room Code</span>
                 <span className="text-2xl font-black text-[#4D96FF]">{matchId}</span>
               </div>
             </div>
 
             <div className="flex justify-center pt-4">
               {status === 'won' ? (
-                <div className="text-center space-y-4 p-6 bg-white rounded-[3rem] border-4 border-[#FFD93D] shadow-xl animate__animated animate__jackInTheBox">
+                <div className="text-center space-y-4 p-6 bg-white rounded-[3rem] border-4 border-[#FFD93D] shadow-xl animate__animated animate__jackInTheBox w-full">
                   <div className="text-6xl mb-2">🏆</div>
                   <h2 className="text-4xl font-black text-[#FF69B4]" style={{ WebkitTextStroke: '1px white' }}>와아! 우승이에요!</h2>
-                  <p className="text-gray-500 font-bold">친구들과 한 번 더 해볼까요?</p>
+                  <p className="text-gray-500 font-bold">{players.find(p => p.id === players[currentTurnIdx]?.id)?.name} 친구 축하해요!</p>
                   <button onClick={() => setStatus('idle')} className="w-full px-10 py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-2xl shadow-[0_6px_0_#E5B700] hover:translate-y-1 hover:shadow-none transition-all flex items-center justify-center gap-2">
                     <PartyPopper size={24}/> 다시 한 판 더!
                   </button>
@@ -295,13 +301,50 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {/* Ranking Modal */}
+      {showRanking && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate__animated animate__fadeIn">
+          <div className="bg-white w-full max-w-sm rounded-[3rem] border-4 border-[#FFD93D] shadow-2xl p-8 relative animate__animated animate__zoomIn">
+            <button onClick={() => setShowRanking(false)} className="absolute top-6 right-6 p-2 bg-[#F0F4F8] rounded-full text-gray-400 hover:text-gray-600">
+              <X size={20}/>
+            </button>
+            <div className="text-center mb-6">
+              <div className="text-4xl mb-2">🏅</div>
+              <h3 className="text-2xl font-black text-[#4A4A4A]">빙고 왕 랭킹</h3>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Hall of Fame</p>
+            </div>
+            <div className="space-y-3">
+              {rankings.map((rank, index) => (
+                <div key={rank.uid} className={`flex items-center justify-between p-4 rounded-2xl border-2 ${index === 0 ? 'bg-yellow-50 border-yellow-200' : 'bg-gray-50 border-gray-100'}`}>
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${index === 0 ? 'bg-yellow-400 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                      {index + 1}
+                    </div>
+                    <p className="font-black text-[#4A4A4A]">{rank.nickname}</p>
+                    {index === 0 && <Medal size={16} className="text-yellow-500"/>}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xl font-black text-[#FF69B4]">{rank.wins}</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">Wins</span>
+                  </div>
+                </div>
+              ))}
+              {rankings.length === 0 && <p className="text-center text-gray-400 py-4 font-bold">아직 랭킹 정보가 없어요!</p>}
+            </div>
+            <button onClick={() => setShowRanking(false)} className="w-full mt-6 py-4 bg-[#FFD93D] text-[#4A4A4A] font-black rounded-2xl shadow-[0_4px_0_#E5B700] active:translate-y-1 active:shadow-none transition-all">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+
       <footer className="mt-auto pt-12 text-[10px] text-gray-400 font-bold tracking-widest text-center">
         <div className="flex items-center justify-center gap-2 mb-1">
            <div className="w-4 h-4 rounded-full bg-pink-200"></div>
            <div className="w-4 h-4 rounded-full bg-yellow-200"></div>
            <div className="w-4 h-4 rounded-full bg-blue-200"></div>
         </div>
-        FRIENDS BINGO V2 • CUTE & DYNAMIC ✨
+        FRIENDS BINGO • HALL OF FAME ENABLED ✨
       </footer>
     </div>
   );
