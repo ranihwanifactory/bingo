@@ -1,6 +1,5 @@
-
 {
-  "name": "우당탕탕! 팡팡 빙고",
-  "description": "친구들과 한 자리에서 즐기는 대형 5x5 로컬 멀티플레이 빙고 게임",
+  "name": "Super Bingo Hero",
+  "description": "A dynamic, multiplayer 5x5 number bingo game for kids with real-time syncing and global rankings.",
   "requestFramePermissions": []
 }

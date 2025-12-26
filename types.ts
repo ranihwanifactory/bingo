@@ -1,33 +1,41 @@
 
-export interface BingoCell {
-  value: number;
-  isMarked: boolean;
-  isWinningCell: boolean;
-  markedBy?: string;
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  wins: number;
+  losses: number;
+  gamesPlayed: number;
 }
 
-export type GameStatus = 'idle' | 'playing' | 'won';
+export enum RoomStatus {
+  WAITING = 'WAITING',
+  PLAYING = 'PLAYING',
+  FINISHED = 'FINISHED'
+}
 
 export interface PlayerInfo {
-  id: string;
-  name: string;
-  color: string;
-  photoURL?: string;
-  isHost?: boolean;
-  h2hRecord?: {
-    myWins: number;
-    opponentWins: number;
-  };
-}
-
-export interface UserRanking {
   uid: string;
-  nickname: string;
-  wins: number;
+  displayName: string;
   photoURL?: string;
+  ready: boolean;
+  isHost: boolean;
+  bingoCount: number;
 }
 
-export interface H2HRecord {
-  [uid: string]: number | string[]; // UID별 승리 횟수 및 playerIds 배열
-  playerIds: string[];
+export interface Room {
+  id: string;
+  hostId: string;
+  status: RoomStatus;
+  players: PlayerInfo[];
+  selectedNumbers: number[];
+  turnIndex: number;
+  winner?: string | null;
+  createdAt: number;
+}
+
+export interface PlayerBoard {
+  uid: string;
+  grid: number[][]; // 5x5
 }
