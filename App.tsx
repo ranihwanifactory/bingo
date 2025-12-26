@@ -11,15 +11,14 @@ import {
   logout, 
   updateUserInfo, 
   recordWin, 
-  getTopRankings,
-  getUserProfile
+  getTopRankings 
 } from './services/firebaseService';
 import { onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import BingoBoard from './components/BingoBoard';
 import { 
   Gamepad2, Trophy, User as UserIcon, Share2, LogOut, 
   Sparkles, BellRing, MessageCircle, Smartphone, 
-  Mail, ShieldCheck, Check, ExternalLink, AlertCircle, Medal
+  Mail, ShieldCheck, Check, ExternalLink, AlertCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -27,7 +26,6 @@ const PLAYER_COLORS = ['#FF6B6B', '#4D96FF', '#6BCB77', '#FFD93D', '#917FB3', '#
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [userStats, setUserStats] = useState<UserRanking | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [status, setStatus] = useState<GameStatus>('idle');
   const [activeTab, setActiveTab] = useState<'game' | 'rank' | 'profile'>('game');
@@ -56,11 +54,6 @@ const App: React.FC = () => {
   currentTurnIdxRef.current = currentTurnIdx;
   const gameEndedRef = useRef(false);
 
-  const fetchUserStats = useCallback(async (uid: string) => {
-    const stats = await getUserProfile(uid);
-    if (stats) setUserStats(stats);
-  }, []);
-
   const syncState = useCallback(() => {
     if (playersRef.current.length > 0 && playersRef.current[0].id === user?.uid) {
       const markedValues = cellsRef.current
@@ -86,12 +79,11 @@ const App: React.FC = () => {
       handleOpenExternal();
     }
 
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthLoading(false);
       if (u) {
-        await updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
-        fetchUserStats(u.uid);
+        updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
       }
     });
 
@@ -102,15 +94,13 @@ const App: React.FC = () => {
       unsub();
       window.removeEventListener('beforeinstallprompt', handler);
     };
-  }, [fetchUserStats]);
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'rank') {
       getTopRankings(10).then(setRankings);
-    } else if (activeTab === 'profile' && user) {
-      fetchUserStats(user.uid);
     }
-  }, [activeTab, user, fetchUserStats]);
+  }, [activeTab]);
 
   const handleOpenExternal = () => {
     const currentUrl = window.location.href;
@@ -170,11 +160,9 @@ const App: React.FC = () => {
       setStatus('won');
       sounds.playWin();
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
-      if (senderId === user?.uid) {
-        recordWin(user.uid).then(() => fetchUserStats(user.uid));
-      }
+      if (senderId === user?.uid) recordWin(user.uid);
     }
-  }, [linesCount, user, fetchUserStats]);
+  }, [linesCount, user]);
 
   const calculateBingo = (board: BingoCell[]) => {
     const size = 5;
@@ -274,14 +262,6 @@ const App: React.FC = () => {
 
   if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] font-black text-gray-400 gap-4"><div className="animate-spin text-4xl">✨</div>로딩 중...</div>;
 
-  const getRankTitle = (wins: number) => {
-    if (wins >= 50) return "전설의 빙고 마스터";
-    if (wins >= 20) return "빙고 도사";
-    if (wins >= 10) return "프로 빙고러";
-    if (wins >= 5) return "빙고 유망주";
-    return "빙고 새내기";
-  };
-
   return (
     <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset">
       {/* Toast Feedback */}
@@ -307,10 +287,7 @@ const App: React.FC = () => {
                 <div className="bg-white p-6 rounded-[2.5rem] shadow-[0_8px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-4">
                   <div className="flex items-center gap-3 bg-[#FFF9E3] p-3 rounded-2xl border-2 border-dashed border-[#FFD93D]">
                     <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-12 h-12 rounded-xl shadow-sm" />
-                    <div>
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">{getRankTitle(userStats?.wins || 0)}</p>
-                      <p className="text-lg font-black truncate">{user.displayName || "빙고왕"}</p>
-                    </div>
+                    <p className="text-lg font-black truncate">{user.displayName || "빙고왕"}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-gray-400 ml-2">비밀 방 번호</label>
@@ -370,7 +347,6 @@ const App: React.FC = () => {
                   <p className="text-lg font-black text-[#FF69B4]">{r.wins}<span className="text-[10px] ml-1">WINS</span></p>
                 </div>
               ))}
-              {rankings.length === 0 && <p className="text-center py-10 text-gray-400 font-bold">랭킹 정보를 불러오고 있어요... 🏅</p>}
             </div>
           </div>
         )}
@@ -379,33 +355,21 @@ const App: React.FC = () => {
         {activeTab === 'profile' && (
           <div className="w-full flex-1 p-8 flex flex-col items-center justify-center animate__animated animate__fadeIn">
             {user ? (
-              <div className="bg-white p-8 rounded-[3rem] border-4 border-[#FFD93D] w-full text-center space-y-6 shadow-xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#FF69B4] via-[#FFD93D] to-[#4D96FF]"></div>
-                <div className="relative inline-block mt-4">
-                  <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-28 h-28 rounded-[2.5rem] border-4 border-[#FFF9E3] shadow-lg" />
-                  <div className="absolute -bottom-2 -right-2 bg-[#FFD93D] p-2.5 rounded-full shadow-md text-white"><Medal size={20} /></div>
+              <div className="bg-white p-8 rounded-[3rem] border-4 border-[#FFD93D] w-full text-center space-y-6">
+                <div className="relative inline-block">
+                  <img src={user.photoURL || ""} className="w-24 h-24 rounded-[2rem] border-4 border-[#FFF9E3] shadow-lg" />
+                  <div className="absolute -bottom-2 -right-2 bg-[#FFD93D] p-2 rounded-full shadow-md"><Sparkles size={16} /></div>
                 </div>
                 <div>
-                  <p className="text-xs font-black text-[#FF69B4] uppercase tracking-[0.2em] mb-1">{getRankTitle(userStats?.wins || 0)}</p>
-                  <h3 className="text-3xl font-black">{userStats?.nickname || user.displayName}</h3>
-                  <p className="text-sm font-bold text-gray-400 opacity-60">{user.email}</p>
+                  <h3 className="text-2xl font-black">{user.displayName}</h3>
+                  <p className="text-sm font-bold text-gray-400">{user.email}</p>
                 </div>
-                
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="bg-[#FFF9E3] p-6 rounded-[2rem] border-2 border-dashed border-[#FFD93D]">
-                    <p className="text-[10px] font-black text-[#FFD93D] uppercase tracking-widest mb-1">Total Victories</p>
-                    <div className="flex items-center justify-center gap-2">
-                       <span className="text-5xl font-black text-[#FF69B4]">{userStats?.wins || 0}</span>
-                       <span className="text-sm font-black text-gray-400">번의 승리</span>
-                    </div>
-                  </div>
+                <div className="bg-pink-50 p-4 rounded-3xl border-2 border-dashed border-pink-200">
+                  <p className="text-[10px] font-black text-pink-400 uppercase tracking-widest">Total Achievements</p>
+                  <p className="text-3xl font-black text-[#FF69B4]">기록된 승리 없음</p>
+                  <p className="text-[10px] font-bold text-pink-300 mt-1">곧 업데이트 예정입니다!</p>
                 </div>
-
-                <div className="pt-4">
-                  <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-xs uppercase tracking-widest flex items-center gap-2 mx-auto transition-colors">
-                    <LogOut size={14}/> 로그아웃
-                  </button>
-                </div>
+                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-xs uppercase tracking-widest flex items-center gap-2 mx-auto"><LogOut size={12}/> 로그아웃</button>
               </div>
             ) : <p className="font-black text-gray-400">로그인이 필요합니다.</p>}
           </div>
@@ -414,7 +378,7 @@ const App: React.FC = () => {
 
       {/* BOTTOM NAVBAR */}
       {user && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t-2 border-gray-100 flex justify-around items-center px-4 pb-8 pt-4 z-50">
+        <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t-2 border-gray-100 flex justify-around items-center px-4 pb-8 pt-4 z-50">
           <NavButton active={activeTab==='game'} icon={<Gamepad2 size={24}/>} label="게임" onClick={()=>setActiveTab('game')} />
           <NavButton active={activeTab==='rank'} icon={<Trophy size={24}/>} label="순위" onClick={()=>setActiveTab('rank')} />
           {status === 'playing' && (

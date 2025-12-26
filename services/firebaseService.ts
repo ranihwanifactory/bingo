@@ -60,21 +60,6 @@ export const logout = async () => {
   return await signOut(auth);
 };
 
-export const getUserProfile = async (uid: string): Promise<UserRanking | null> => {
-  const userRef = doc(db, "users", uid);
-  const userSnap = await getDoc(userRef);
-  if (userSnap.exists()) {
-    const data = userSnap.data();
-    return {
-      uid: userSnap.id,
-      nickname: data.nickname || "신비한 빙고술사",
-      wins: data.wins || 0,
-      photoURL: data.photoURL
-    };
-  }
-  return null;
-};
-
 export const updateUserInfo = async (uid: string, nickname: string, photoURL?: string) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
