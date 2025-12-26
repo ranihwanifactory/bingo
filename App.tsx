@@ -26,6 +26,10 @@ import confetti from 'canvas-confetti';
 
 const PLAYER_COLORS = ['#FF6B6B', '#4D96FF', '#6BCB77', '#FFD93D', '#917FB3', '#FF9F43'];
 
+const generateRoomId = () => {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [userStats, setUserStats] = useState<UserRanking | null>(null);
@@ -42,6 +46,7 @@ const App: React.FC = () => {
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [isExternalBrowserRequired, setIsExternalBrowserRequired] = useState(false);
 
+  // 실시간 통신 시 최신 상태를 참조하기 위한 Refs
   const playersRef = useRef<PlayerInfo[]>([]);
   playersRef.current = players;
   const cellsRef = useRef<BingoCell[]>([]);
@@ -69,6 +74,21 @@ const App: React.FC = () => {
     gameEndedRef.current = false;
   }, []);
 
+  const calculateBingo = (board: BingoCell[]) => {
+    const size = 5;
+    const lines: number[][] = [];
+    for (let i = 0; i < size; i++) {
+      const row = Array.from({ length: size }, (_, j) => i * size + j);
+      if (row.every(idx => board[idx].isMarked)) lines.push(row);
+      const col = Array.from({ length: size }, (_, j) => j * size + i);
+      if (col.every(idx => board[idx].isMarked)) lines.push(col);
+    }
+    const d1 = [0, 6, 12, 18, 24], d2 = [4, 8, 12, 16, 20];
+    if (d1.every(idx => board[idx].isMarked)) lines.push(d1);
+    if (d2.every(idx => board[idx].isMarked)) lines.push(d2);
+    return { count: lines.length, winningIndices: new Set(lines.flat()) };
+  };
+
   const fetchUserStats = useCallback(async (uid: string) => {
     try {
       const stats = await getUserProfile(uid);
@@ -94,76 +114,26 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); }
   }, [user]);
 
+  // 방장이 새로운 참가자에게 현재 정보를 쏴주는 기능
   const syncState = useCallback(() => {
     if (!matchId || !user) return;
     const currentPs = playersRef.current;
-    // 방장(첫 번째 플레이어)만 현재 상태(마킹된 값들)를 동기화 시켜줌
     if (currentPs.length > 0 && currentPs[0].id === user.uid) {
       const markedValues = cellsRef.current
         .filter(c => c.isMarked)
         .map(c => ({ value: c.value, senderId: c.markedBy }));
       
+      const boardValues = cellsRef.current.map(c => c.value);
+      
       publishMessage(matchId, {
         action: 'sync_state',
         markedValues,
+        boardValues, // 보드 숫자 배열까지 동기화 (방장이 기준)
         currentTurnIdx: currentTurnIdxRef.current,
-        players: currentPs.map(({h2hRecord, ...rest}) => rest) // 순수 정보만 전송
+        players: currentPs.map(({h2hRecord, ...rest}) => rest)
       });
     }
   }, [matchId, user]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomFromUrl = params.get('room');
-    if (roomFromUrl) {
-      setMatchId(roomFromUrl.toUpperCase().trim());
-    }
-
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        setUser(u);
-        await updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
-        fetchUserStats(u.uid);
-      } else {
-        setUser(null);
-        resetAllState();
-      }
-      setAuthLoading(false);
-    });
-
-    return () => unsub();
-  }, [fetchUserStats, resetAllState]);
-
-  useEffect(() => {
-    if (activeTab === 'rank') {
-      getTopRankings(10).then(setRankings).catch(console.error);
-    } else if (activeTab === 'profile' && user) {
-      fetchUserStats(user.uid);
-    }
-  }, [activeTab, user, fetchUserStats]);
-
-  const generateRoomId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
-
-  const handleCopyLink = async () => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopyFeedback(true);
-      setTimeout(() => setCopyFeedback(false), 2000);
-    } catch (e) { alert("링크 복사 실패!"); }
-  };
-
-  const handleShare = async () => {
-    if (!matchId.trim()) return alert("공유할 방 번호가 없어요!");
-    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: '팡팡 빙고!', text: `방 번호 [${matchId}] 로 들어와!`, url: shareUrl });
-      } catch (e) { handleCopyLink(); }
-    } else {
-      handleCopyLink();
-    }
-  };
 
   const handleMarkAction = useCallback(async (value: number, senderId: string) => {
     const currentCells = [...cellsRef.current];
@@ -209,20 +179,27 @@ const App: React.FC = () => {
     }
   }, [linesCount, user, fetchUserStats, fetchH2HRecords]);
 
-  const calculateBingo = (board: BingoCell[]) => {
-    const size = 5;
-    const lines: number[][] = [];
-    for (let i = 0; i < size; i++) {
-      const row = Array.from({ length: size }, (_, j) => i * size + j);
-      if (row.every(idx => board[idx].isMarked)) lines.push(row);
-      const col = Array.from({ length: size }, (_, j) => j * size + i);
-      if (col.every(idx => board[idx].isMarked)) lines.push(col);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get('room');
+    if (roomFromUrl) {
+      setMatchId(roomFromUrl.toUpperCase().trim());
     }
-    const d1 = [0, 6, 12, 18, 24], d2 = [4, 8, 12, 16, 20];
-    if (d1.every(idx => board[idx].isMarked)) lines.push(d1);
-    if (d2.every(idx => board[idx].isMarked)) lines.push(d2);
-    return { count: lines.length, winningIndices: new Set(lines.flat()) };
-  };
+
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        setUser(u);
+        await updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
+        fetchUserStats(u.uid);
+      } else {
+        setUser(null);
+        resetAllState();
+      }
+      setAuthLoading(false);
+    });
+
+    return () => unsub();
+  }, [fetchUserStats, resetAllState]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -236,9 +213,9 @@ const App: React.FC = () => {
 
         if (payload.action === 'join' || payload.action === 'presence') {
           const newPlayerId = payload.playerId;
+          
           setPlayers(prev => {
-            const alreadyExists = prev.find(p => p.id === newPlayerId);
-            if (alreadyExists) return prev;
+            if (prev.find(p => p.id === newPlayerId)) return prev;
             
             const newPlayersList = [...prev, { 
               id: newPlayerId, 
@@ -250,6 +227,7 @@ const App: React.FC = () => {
             sounds.playJoin();
             fetchH2HRecords(newPlayersList);
 
+            // 상대가 join 했다면 나의 존재(presence)와 현재 판(sync_state)을 답장함
             if (payload.action === 'join') {
               publishMessage(cleanMatchId, { 
                 action: 'presence', 
@@ -257,13 +235,23 @@ const App: React.FC = () => {
                 name: user.displayName || user.email?.split('@')[0], 
                 photoURL: user.photoURL 
               });
-              setTimeout(syncState, 500);
+              // 0.8초 뒤에 현재 판 동기화 (충분한 시간 확보)
+              setTimeout(syncState, 800);
             }
             return newPlayersList;
           });
         } else if (payload.action === 'mark') {
           handleMarkAction(payload.value, payload.senderId);
         } else if (payload.action === 'sync_state') {
+          // 입장 시 방장의 빙고판 숫자로 강제 동기화 (모두가 같은 판을 보게 함)
+          if (payload.boardValues && payload.boardValues.length === 25) {
+            setCells(payload.boardValues.map((v: number) => ({
+              value: v,
+              isMarked: false,
+              isWinningCell: false
+            })));
+          }
+
           if (payload.players) {
             const syncedPlayers = payload.players.map((p: any, idx: number) => ({
               ...p,
@@ -271,31 +259,33 @@ const App: React.FC = () => {
             })).sort((a: any, b: any) => a.id.localeCompare(b.id));
             
             setPlayers(prev => {
-              // 이미 등록된 플레이어면 업데이트하지 않음 (전적 보존을 위해)
-              const existingIds = new Set(prev.map(p => p.id));
-              const newEntries = syncedPlayers.filter((p: any) => !existingIds.has(p.id));
-              if (newEntries.length === 0) return prev;
-              const combined = [...prev, ...newEntries].sort((a, b) => a.id.localeCompare(b.id));
-              fetchH2HRecords(combined);
-              return combined;
+              const combined = [...prev];
+              syncedPlayers.forEach((sp: any) => {
+                if (!combined.find(p => p.id === sp.id)) combined.push(sp);
+              });
+              const sorted = combined.sort((a, b) => a.id.localeCompare(b.id));
+              fetchH2HRecords(sorted);
+              return sorted;
             });
           }
-          const markedVals = (payload.markedValues || []) as {value: number, senderId: string}[];
-          let updatedCells = [...cellsRef.current];
-          markedVals.forEach(mv => {
-            const idx = updatedCells.findIndex(c => c.value === mv.value);
-            if (idx !== -1) updatedCells[idx] = { ...updatedCells[idx], isMarked: true, markedBy: mv.senderId };
-          });
-          const { count, winningIndices } = calculateBingo(updatedCells);
-          setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
-          setLinesCount(count);
-          if (payload.currentTurnIdx !== undefined) {
-            setCurrentTurnIdx(payload.currentTurnIdx);
-          }
+          
+          // 마킹된 값들 복구
+          setTimeout(() => {
+            const markedVals = (payload.markedValues || []) as {value: number, senderId: string}[];
+            let updatedCells = [...cellsRef.current];
+            markedVals.forEach(mv => {
+              const idx = updatedCells.findIndex(c => c.value === mv.value);
+              if (idx !== -1) updatedCells[idx] = { ...updatedCells[idx], isMarked: true, markedBy: mv.senderId };
+            });
+            const { count, winningIndices } = calculateBingo(updatedCells);
+            setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
+            setLinesCount(count);
+            if (payload.currentTurnIdx !== undefined) setCurrentTurnIdx(payload.currentTurnIdx);
+          }, 100);
         }
       });
 
-      // 3초마다 내가 있음을 알리는 하트비트 (상대방이 들어왔을 때 놓치지 않게 함)
+      // 하트비트: 2.5초마다 나를 방송함 (친구가 언제 들어오든 바로 인지할 수 있게 함)
       heartbeatInterval = setInterval(() => {
         if (playersRef.current.length < 2) {
           publishMessage(cleanMatchId, { 
@@ -305,9 +295,9 @@ const App: React.FC = () => {
             photoURL: user.photoURL 
           });
         }
-      }, 3000);
+      }, 2500);
 
-      // 입장 즉시 참여 알림 (약간의 지연으로 구독 완료 대기)
+      // 첫 입장 신호 (지연을 두어 채널이 충분히 열리게 함)
       setTimeout(() => {
         publishMessage(cleanMatchId, { 
           action: 'join', 
@@ -315,7 +305,7 @@ const App: React.FC = () => {
           name: user.displayName || user.email?.split('@')[0], 
           photoURL: user.photoURL 
         });
-      }, 800);
+      }, 1000);
     }
     
     return () => {
@@ -338,7 +328,6 @@ const App: React.FC = () => {
     setStatus('playing');
     setActiveTab('game');
     sounds.playJoin();
-    setCommentary("친구들을 기다리고 있어요! 초대 버튼으로 공유하세요.");
   };
 
   const createNewGame = () => startGame(generateRoomId());
@@ -356,6 +345,27 @@ const App: React.FC = () => {
 
     publishMessage(matchId, { action: 'mark', value: val, senderId: user?.uid });
     handleMarkAction(val, user?.uid || "");
+  };
+
+  const handleShare = async () => {
+    if (!matchId.trim()) return alert("공유할 방 번호가 없어요!");
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: '팡팡 빙고!', text: `방 번호 [${matchId}] 로 들어와!`, url: shareUrl });
+      } catch (e) { handleCopyLink(); }
+    } else {
+      handleCopyLink();
+    }
+  };
+
+  const handleCopyLink = async () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    } catch (e) { alert("링크 복사 실패!"); }
   };
 
   const openInChrome = () => {

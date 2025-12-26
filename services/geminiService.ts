@@ -13,10 +13,14 @@ export const getAICommentary = async (lines: number, isWinner: boolean): Promise
       ? `초등학생용 빙고 게임에서 플레이어가 우승했어요! 아주아주 신나고 귀여운 말투로 칭찬해주세요. (이모지 포함, 1문장)`
       : `초등학생용 빙고 게임에서 플레이어가 ${lines}줄을 완성했어요! 다음 줄을 기대하게 만드는 귀엽고 다정한 응원을 해주세요. (이모지 포함, 1문장)`;
 
+    // FIX: Included thinkingConfig with thinkingBudget: 0 to reserve output tokens for Gemini 3 models.
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
-      config: { maxOutputTokens: 100 }
+      config: { 
+        maxOutputTokens: 100,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
     });
 
     return response.text || "와아! 정말 대단한 실력이에요! 🌟";

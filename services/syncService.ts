@@ -25,6 +25,7 @@ export const subscribeToMatch = (matchId: string, onMessage: (data: any) => void
   let eventSource: EventSource | null = null;
   
   const connect = () => {
+    // ntfy.sh의 캐시된 메시지를 받지 않기 위해 필터링하거나 SSE 연결
     eventSource = new EventSource(`${NTFY_BASE_URL}/${topic}/sse`);
 
     eventSource.onmessage = (event) => {
@@ -32,12 +33,12 @@ export const subscribeToMatch = (matchId: string, onMessage: (data: any) => void
         const data = JSON.parse(event.data);
         if (data.message) {
           let payload = data.message;
-          // ntfy는 메시지를 문자열로 한 번 더 감싸는 경우가 많음
+          // ntfy는 가끔 이중 JSON 인코딩을 함
           if (typeof payload === 'string') {
             try {
               payload = JSON.parse(payload);
             } catch (e) {
-              // 일반 문자열일 경우 그대로 사용하거나 무시
+              // 그냥 일반 텍스트인 경우 무시
               return;
             }
           }
@@ -46,20 +47,22 @@ export const subscribeToMatch = (matchId: string, onMessage: (data: any) => void
           }
         }
       } catch (e) {
-        console.warn("Parsing message failed", e);
+        console.warn("Message parsing failed:", e);
       }
     };
 
     eventSource.onerror = (e) => {
-      console.error("SSE Connection Error, retrying...", e);
+      console.error("SSE Connection Error. Retrying in 2s...", e);
       eventSource?.close();
-      setTimeout(connect, 2000); // 2초 후 재연결 시도
+      setTimeout(connect, 2000);
     };
   };
 
   connect();
 
   return () => {
-    eventSource?.close();
+    if (eventSource) {
+      eventSource.close();
+    }
   };
 };
