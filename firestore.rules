@@ -1,0 +1,17 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 사용자 프로필 규칙: 로그인한 사용자는 모든 프로필을 읽을 수 있고, 본인의 것만 수정 가능
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // 게임방 규칙: 로그인한 모든 사용자가 방을 만들고 참가하며 업데이트할 수 있음
+    match /rooms/{roomId} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && resource.data.hostId == request.auth.uid;
+    }
+  }
+}
