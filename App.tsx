@@ -2,23 +2,32 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BingoCell, GameStatus } from './types';
 import { generateSeededBoard, getAICommentary } from './services/geminiService';
-import { publishMark, subscribeToMatch } from './services/syncService';
+import { publishMessage, subscribeToMatch } from './services/syncService';
 import BingoBoard from './components/BingoBoard';
-import { Trophy, RotateCcw, Play, Hash, MessageCircle, Globe } from 'lucide-react';
+import { Trophy, RotateCcw, Play, Hash, MessageCircle, Globe, User, Users, Download } from 'lucide-react';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<GameStatus>('idle');
   const [matchId, setMatchId] = useState<string>('');
   const [cells, setCells] = useState<BingoCell[]>([]);
   const [linesCount, setLinesCount] = useState<number>(0);
-  const [commentary, setCommentary] = useState<string>("친구와 같은 코드를 입력해 실시간 대결을 시작하세요!");
+  const [commentary, setCommentary] = useState<string>("친구와 같은 코드를 입력해 실시간 턴제 대결을 시작하세요!");
   const [isSynced, setIsSynced] = useState(false);
+  const [players, setPlayers] = useState<string[]>([]);
+  const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
+  const [myId] = useState(() => {
+    const saved = localStorage.getItem('bingo_player_id');
+    if (saved) return saved;
+    const newId = 'P-' + Math.random().toString(36).substr(2, 4).toUpperCase();
+    localStorage.setItem('bingo_player_id', newId);
+    return newId;
+  });
 
-  // 현재 보드 상태를 추적하기 위한 ref (클로저 문제 방지)
   const cellsRef = useRef<BingoCell[]>([]);
   cellsRef.current = cells;
+  const playersRef = useRef<string[]>([]);
+  playersRef.current = players;
 
-  // 라인 체크 로직 (재사용)
   const calculateBingo = (board: BingoCell[]) => {
     const size = 5;
     const lines: number[][] = [];
@@ -34,10 +43,8 @@ const App: React.FC = () => {
     return { count: lines.length, winningIndices: new Set(lines.flat()) };
   };
 
-  // 메시지 수신 시 보드 업데이트
-  const applyRemoteMark = useCallback((value: number) => {
+  const applyRemoteMark = useCallback((value: number, nextTurnIdx: number) => {
     const currentCells = cellsRef.current;
-    // 이미 체크된 경우 무시
     const targetCell = currentCells.find(c => c.value === value);
     if (!targetCell || targetCell.isMarked) return;
 
@@ -52,149 +59,181 @@ const App: React.FC = () => {
     }));
 
     setCells(finalCells);
+    setCurrentTurnIdx(nextTurnIdx);
     
-    // 라인이 늘어났을 때 AI 멘트
     if (count > linesCount) {
-      updateCommentary(count);
+      updateAICommentary(count);
     }
     setLinesCount(count);
-
     if (count >= 5) setStatus('won');
   }, [linesCount]);
 
-  const updateCommentary = async (count: number) => {
+  const updateAICommentary = async (count: number) => {
     const isWinner = count >= 5;
     const msg = await getAICommentary(count, isWinner);
     setCommentary(msg);
   };
 
-  // 게임 시작 및 구독 설정
+  // 실시간 메시지 처리
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
 
     if (status === 'playing' && matchId) {
       setIsSynced(true);
       unsubscribe = subscribeToMatch(matchId, (payload) => {
-        if (payload.action === 'mark') {
-          applyRemoteMark(payload.value);
+        if (payload.action === 'join') {
+          // 새로운 플레이어 입장 알림을 받으면 내 ID도 다시 전송하여 서로를 인지
+          if (!playersRef.current.includes(payload.playerId)) {
+            setPlayers(prev => [...prev, payload.playerId].sort());
+            publishMessage(matchId, { action: 'presence', playerId: myId });
+          }
+        } else if (payload.action === 'presence') {
+          if (!playersRef.current.includes(payload.playerId)) {
+            setPlayers(prev => [...prev, payload.playerId].sort());
+          }
+        } else if (payload.action === 'mark') {
+          applyRemoteMark(payload.value, payload.nextTurnIdx);
         }
       });
-    } else {
-      setIsSynced(false);
+
+      // 입장 즉시 나를 알림
+      publishMessage(matchId, { action: 'join', playerId: myId });
     }
 
     return () => {
       if (unsubscribe) unsubscribe();
+      setPlayers([]);
+      setCurrentTurnIdx(0);
     };
-  }, [status, matchId, applyRemoteMark]);
+  }, [status, matchId, myId, applyRemoteMark]);
 
   const startGame = () => {
-    if (!matchId.trim()) {
-      alert("매치 코드를 입력해주세요!");
-      return;
-    }
+    if (!matchId.trim()) return alert("매치 코드를 입력하세요!");
     const values = generateSeededBoard(matchId.trim().toLowerCase());
-    const initialBoard = values.map(v => ({ value: v, isMarked: false, isWinningCell: false }));
-    setCells(initialBoard);
+    setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
+    setPlayers([myId]);
     setStatus('playing');
-    setCommentary(`[${matchId}] 방에서 실시간 동기화 중입니다. 숫자를 부르세요!`);
   };
 
   const handleCellClick = (val: number) => {
     if (status !== 'playing') return;
     
-    // 이미 마킹된 경우 무시 (토글 방지 - 빙고는 한 번 칠하면 끝)
+    // 내 차례인지 확인
+    const isMyTurn = players[currentTurnIdx] === myId;
+    if (!isMyTurn) {
+      setCommentary("상대방의 차례입니다! 조금만 기다려주세요.");
+      return;
+    }
+
     const target = cells.find(c => c.value === val);
     if (target?.isMarked) return;
 
-    // 1. 서버에 알림 (동기화 발신)
-    publishMark(matchId, val);
+    const nextTurnIdx = (currentTurnIdx + 1) % players.length;
 
-    // 2. 내 화면 즉시 업데이트
-    applyRemoteMark(val);
+    // 동기화 메시지 발송
+    publishMessage(matchId, { 
+      action: 'mark', 
+      value: val, 
+      nextTurnIdx,
+      senderId: myId 
+    });
+
+    // 로컬 업데이트
+    applyRemoteMark(val, nextTurnIdx);
   };
 
+  const isMyTurn = players.length > 0 && players[currentTurnIdx] === myId;
+
   return (
-    <div className="min-h-screen flex flex-col items-center bg-[#0f172a] text-white py-8 px-4 font-sans selection:bg-cyan-500/30">
-      <header className="text-center mb-8 space-y-2">
-        <h1 className="text-5xl md:text-7xl font-orbitron font-extrabold tracking-tighter neon-text uppercase">
+    <div className="min-h-screen flex flex-col items-center bg-[#0f172a] text-white py-6 px-4 font-sans">
+      <header className="text-center mb-6 space-y-1">
+        <h1 className="text-4xl md:text-6xl font-orbitron font-extrabold neon-text uppercase tracking-tighter">
           BINGO NEON
         </h1>
-        <div className="flex items-center justify-center gap-4 text-cyan-400 font-bold tracking-widest text-xs">
-          <span className="flex items-center gap-1"><Hash size={14} /> MULTI-SYNC</span>
-          {status === 'playing' && (
-            <span className={`flex items-center gap-1 ${isSynced ? 'text-green-400' : 'text-red-400'}`}>
-              <Globe size={14} className={isSynced ? 'animate-pulse' : ''} /> 
-              {isSynced ? 'LIVE SYNCED' : 'OFFLINE'}
-            </span>
-          )}
+        <div className="flex items-center justify-center gap-3 text-[10px] font-bold tracking-widest text-cyan-400 opacity-80">
+          <span className="flex items-center gap-1"><User size={12}/> ID: {myId}</span>
+          <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
+          <span className="flex items-center gap-1"><Users size={12}/> PLAYERS: {players.length}</span>
         </div>
       </header>
 
-      <main className="w-full max-w-xl">
+      <main className="w-full max-w-md space-y-4">
         {status === 'idle' ? (
-          <div className="bg-slate-800/50 p-8 rounded-3xl border border-slate-700 shadow-2xl space-y-8 animate-in fade-in zoom-in duration-500">
-            <div className="space-y-4">
-              <label className="block text-sm font-bold text-slate-400 uppercase tracking-widest">Match Code (친구와 같은 코드를 쓰세요)</label>
+          <div className="bg-slate-800/40 p-6 rounded-3xl border border-slate-700 shadow-2xl space-y-6">
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest ml-1">Room Match Code</label>
               <input 
                 type="text" 
                 value={matchId}
                 onChange={(e) => setMatchId(e.target.value)}
-                placeholder="예: LUCK777"
-                className="w-full bg-slate-900 border-2 border-slate-700 rounded-2xl px-6 py-4 text-2xl font-orbitron focus:border-cyan-500 focus:outline-none transition-all text-cyan-400 uppercase"
+                placeholder="예: BINGO123"
+                className="w-full bg-slate-900/80 border-2 border-slate-700 rounded-2xl px-5 py-4 text-xl font-orbitron focus:border-cyan-500 focus:outline-none transition-all text-cyan-400 uppercase"
               />
             </div>
             
             <button 
               onClick={startGame}
-              className="w-full py-5 bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-black text-2xl rounded-2xl shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all transform hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-3"
+              className="w-full py-4 bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-black text-xl rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
             >
-              <Play fill="currentColor" size={28} /> 동기화 시작
+              <Play fill="currentColor" size={20} /> 대결 시작하기
             </button>
-            
-            <p className="text-center text-slate-500 text-sm italic">
-              * 배포 후 각자의 기기에서 동일한 매치 코드로 접속하면 클릭이 서로 동기화됩니다.
-            </p>
+
+            <div className="pt-4 border-t border-slate-700/50">
+              <p className="text-[11px] text-slate-500 text-center mb-4 leading-relaxed">
+                * 동일한 코드로 접속한 플레이어들과 순서대로 번호를 누르는 턴제 게임입니다.<br/>
+                * 아래 버튼을 눌러 앱으로 설치하면 더 쾌적하게 즐길 수 있습니다.
+              </p>
+              <button 
+                onClick={() => window.dispatchEvent(new Event('beforeinstallprompt'))}
+                className="w-full py-2 border border-slate-600 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:border-white transition-all flex items-center justify-center gap-2"
+              >
+                <Download size={14} /> 홈 화면에 앱 설치하기
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="space-y-6 animate-in slide-in-from-bottom-8 duration-500">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700 flex flex-col items-center justify-center relative overflow-hidden group">
-                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest z-10">Lines</span>
-                <span className="text-4xl font-orbitron font-black text-pink-500 z-10">{linesCount} / 5</span>
-                <div className="absolute inset-0 bg-pink-500/5 group-hover:bg-pink-500/10 transition-colors"></div>
+          <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
+            {/* Turn Indicator */}
+            <div className={`p-4 rounded-2xl border-2 transition-all duration-500 flex items-center justify-between ${isMyTurn ? 'bg-cyan-500/20 border-cyan-400 active-turn-glow' : 'bg-slate-800/60 border-slate-700'}`}>
+              <div className="flex flex-col">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400">Current Turn</span>
+                <span className={`text-lg font-orbitron font-bold ${isMyTurn ? 'text-cyan-400' : 'text-white'}`}>
+                  {isMyTurn ? 'YOUR TURN (나)' : `${players[currentTurnIdx] || 'Waiting...'}`}
+                </span>
               </div>
-              <div className="bg-slate-800/80 p-4 rounded-2xl border border-slate-700 flex flex-col items-center justify-center">
-                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Room</span>
-                <span className="text-xl font-orbitron font-bold text-cyan-400 uppercase truncate max-w-full px-2">{matchId}</span>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isMyTurn ? 'bg-cyan-500 shadow-[0_0_15px_#22d3ee]' : 'bg-slate-700 text-slate-500'}`}>
+                {isMyTurn ? <Play fill="black" size={20} /> : <div className="w-2 h-2 bg-slate-500 rounded-full animate-pulse"></div>}
               </div>
             </div>
 
-            <div className="bg-cyan-500/10 border-l-4 border-cyan-500 p-4 rounded-r-xl flex items-start gap-3 min-h-[80px]">
-              <MessageCircle className="text-cyan-400 mt-1 flex-shrink-0" />
-              <p className="text-slate-200 italic font-medium leading-tight">"{commentary}"</p>
+            <div className="bg-slate-800/40 p-3 rounded-xl flex items-center gap-3 text-xs italic text-slate-300 border border-slate-700/50">
+              <MessageCircle size={14} className="text-cyan-400 shrink-0" />
+              <p className="line-clamp-2">"{commentary}"</p>
             </div>
 
             <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} />
 
-            <div className="flex flex-col items-center gap-6 mt-8">
+            <div className="flex items-center justify-between px-2">
+              <div className="flex flex-col">
+                <span className="text-[9px] text-slate-500 uppercase font-black">Match Code</span>
+                <span className="text-sm font-orbitron font-bold text-slate-300">{matchId}</span>
+              </div>
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] text-slate-500 uppercase font-black">My Progress</span>
+                <span className="text-sm font-orbitron font-bold text-pink-500">{linesCount} / 5 Lines</span>
+              </div>
+            </div>
+
+            <div className="flex justify-center pt-2">
               {status === 'won' ? (
-                <div className="text-center space-y-6 animate-bounce">
-                  <h2 className="text-5xl font-orbitron font-black text-white neon-text">VICTORY!</h2>
-                  <button 
-                    onClick={() => setStatus('idle')}
-                    className="px-10 py-4 bg-pink-500 text-white font-bold rounded-full shadow-lg hover:bg-pink-400 transition-all"
-                  >
-                    새 매치 만들기
-                  </button>
+                <div className="text-center space-y-4">
+                  <h2 className="text-4xl font-orbitron font-black text-white neon-text animate-bounce">WINNER!</h2>
+                  <button onClick={() => setStatus('idle')} className="px-8 py-3 bg-pink-500 text-white font-black rounded-full shadow-lg">REMATCH</button>
                 </div>
               ) : (
-                <button 
-                  onClick={() => { if(confirm("대결을 종료하시겠습니까?")) setStatus('idle'); }}
-                  className="flex items-center gap-2 text-slate-500 hover:text-slate-300 transition-colors uppercase text-xs font-bold tracking-widest"
-                >
-                  <RotateCcw size={14} /> Exit Room
+                <button onClick={() => confirm("게임을 종료할까요?") && setStatus('idle')} className="text-[10px] font-bold text-slate-600 hover:text-slate-400 flex items-center gap-1 uppercase tracking-widest">
+                  <RotateCcw size={10} /> Leave Match
                 </button>
               )}
             </div>
@@ -202,10 +241,9 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <div className="fixed inset-0 pointer-events-none -z-10 opacity-30">
-        <div className="absolute top-1/3 -left-20 w-[500px] h-[500px] bg-cyan-900/40 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-1/3 -right-20 w-[500px] h-[500px] bg-pink-900/40 rounded-full blur-[120px]"></div>
-      </div>
+      <footer className="mt-auto pt-8 text-[9px] text-slate-700 font-bold tracking-widest uppercase">
+        &copy; 2024 NEON BINGO ENGINE • REAL-TIME SYNC
+      </footer>
     </div>
   );
 };

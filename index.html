@@ -3,8 +3,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Neon AI Bingo</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/5953/5953496.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -15,6 +18,7 @@
             background: #0f172a;
             color: white;
             overflow-x: hidden;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .font-orbitron {
@@ -30,21 +34,28 @@
             border: 1px solid rgba(34, 211, 238, 0.5);
         }
 
-        .bingo-glow {
-            box-shadow: 0 0 30px rgba(236, 72, 153, 0.6);
-            border: 2px solid rgba(236, 72, 153, 1);
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 5px rgba(34, 211, 238, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(34, 211, 238, 0.8); }
+            100% { box-shadow: 0 0 5px rgba(34, 211, 238, 0.5); }
         }
 
-        @keyframes float {
-            0% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-            100% { transform: translateY(0px); }
-        }
-
-        .animate-float {
-            animation: float 4s ease-in-out infinite;
+        .active-turn-glow {
+            animation: pulse-glow 2s infinite;
+            border-color: #22d3ee;
         }
     </style>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js').then(reg => {
+            console.log('SW registered:', reg);
+          }).catch(err => {
+            console.log('SW registration failed:', err);
+          });
+        });
+      }
+    </script>
 <script type="importmap">
 {
   "imports": {
