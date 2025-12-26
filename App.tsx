@@ -1,168 +1,39 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BingoCell, GameStatus, PlayerInfo, UserRanking } from './types';
-import { generateRandomBoard, getAICommentary } from './services/geminiService';
+import { BingoCell, GameStatus, PlayerInfo } from './types';
+import { generateSeededBoard, getAICommentary } from './services/geminiService';
 import { publishMessage, subscribeToMatch } from './services/syncService';
 import { sounds } from './services/soundService';
-import { 
-  auth, 
-  loginWithGoogle, 
-  loginWithEmail,
-  logout, 
-  updateUserInfo, 
-  recordWin, 
-  getTopRankings 
-} from './services/firebaseService';
-import { onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import BingoBoard from './components/BingoBoard';
-import { 
-  Gamepad2, Trophy, User as UserIcon, Share2, LogOut, 
-  Sparkles, BellRing, MessageCircle, Smartphone, 
-  Mail, ShieldCheck, Check, ExternalLink, AlertCircle
-} from 'lucide-react';
+import { Play, MessageCircle, User, Users, Download, PartyPopper, LogOut, Sparkles, BellRing } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 const PLAYER_COLORS = ['#FF6B6B', '#4D96FF', '#6BCB77', '#FFD93D', '#917FB3', '#FF9F43'];
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
   const [status, setStatus] = useState<GameStatus>('idle');
-  const [activeTab, setActiveTab] = useState<'game' | 'rank' | 'profile'>('game');
   const [matchId, setMatchId] = useState<string>('');
+  const [nickname, setNickname] = useState<string>(() => localStorage.getItem('bingo_nickname') || '');
   const [cells, setCells] = useState<BingoCell[]>([]);
   const [linesCount, setLinesCount] = useState<number>(0);
-  const [commentary, setCommentary] = useState<string>("친구들과 함께하는 신나는 빙고 타임! 🌈");
+  const [commentary, setCommentary] = useState<string>("친구랑 같이 모여서 즐거운 빙고 한 판! 🎈");
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
-  const [rankings, setRankings] = useState<UserRanking[]>([]);
-  const [copyFeedback, setCopyFeedback] = useState(false);
-  
-  const [isKakaoBrowser, setIsKakaoBrowser] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [myId] = useState(() => {
+    let id = localStorage.getItem('bingo_player_id');
+    if (!id) {
+      id = 'U-' + Math.random().toString(36).substr(2, 4).toUpperCase();
+      localStorage.setItem('bingo_player_id', id);
+    }
+    return id;
+  });
 
-  // Login states
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isEmailLogin, setIsEmailLogin] = useState(false);
-
-  const playersRef = useRef<PlayerInfo[]>([]);
-  playersRef.current = players;
   const cellsRef = useRef<BingoCell[]>([]);
   cellsRef.current = cells;
-  const currentTurnIdxRef = useRef(0);
-  currentTurnIdxRef.current = currentTurnIdx;
-  const gameEndedRef = useRef(false);
-
-  const syncState = useCallback(() => {
-    if (playersRef.current.length > 0 && playersRef.current[0].id === user?.uid) {
-      const markedValues = cellsRef.current
-        .filter(c => c.isMarked)
-        .map(c => ({ value: c.value, senderId: c.markedBy }));
-      
-      publishMessage(matchId, {
-        action: 'sync_state',
-        markedValues,
-        currentTurnIdx: currentTurnIdxRef.current
-      });
-    }
-  }, [matchId, user]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomFromUrl = params.get('room');
-    if (roomFromUrl) setMatchId(roomFromUrl);
-
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.indexOf('kakaotalk') > -1) {
-      setIsKakaoBrowser(true);
-      handleOpenExternal();
-    }
-
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthLoading(false);
-      if (u) {
-        updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
-      }
-    });
-
-    const handler = (e: any) => { e.preventDefault(); setDeferredPrompt(e); };
-    window.addEventListener('beforeinstallprompt', handler);
-
-    return () => {
-      unsub();
-      window.removeEventListener('beforeinstallprompt', handler);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === 'rank') {
-      getTopRankings(10).then(setRankings);
-    }
-  }, [activeTab]);
-
-  const handleOpenExternal = () => {
-    const currentUrl = window.location.href;
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.match(/android/)) {
-      window.location.href = `intent://${currentUrl.replace(/https?:\/\//i, '')}#Intent;scheme=http;package=com.android.chrome;end`;
-    } else {
-      window.location.href = `kakaotalk://web/openExternal?url=${encodeURIComponent(currentUrl)}`;
-    }
-  };
-
-  const handleShare = async () => {
-    if (!matchId.trim()) return alert("공유할 방 번호가 없어요!");
-    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${matchId}`;
-    const shareData = { title: '팡팡 빙고!', text: `방 번호 [${matchId}] 로 들어와!`, url: shareUrl };
-
-    if (navigator.share) {
-      try { await navigator.share(shareData); } catch (e) {}
-    } else {
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        setCopyFeedback(true);
-        setTimeout(() => setCopyFeedback(false), 2000);
-      } catch (e) { alert("링크 복사 실패!"); }
-    }
-  };
-
-  const handleMarkAction = useCallback((value: number, senderId: string) => {
-    const currentCells = [...cellsRef.current];
-    const targetIdx = currentCells.findIndex(c => c.value === value);
-    if (targetIdx === -1 || currentCells[targetIdx].isMarked) return;
-
-    sounds.playPop();
-    currentCells[targetIdx] = { ...currentCells[targetIdx], isMarked: true, markedBy: senderId };
-
-    const { count, winningIndices } = calculateBingo(currentCells);
-    setCells(currentCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
-    
-    const currentPlayers = playersRef.current;
-    if (currentPlayers.length > 0) {
-      const lastPlayerIdx = currentPlayers.findIndex(p => p.id === senderId);
-      if (lastPlayerIdx !== -1) {
-        const nextIdx = (lastPlayerIdx + 1) % currentPlayers.length;
-        setCurrentTurnIdx(nextIdx);
-        if (currentPlayers[nextIdx].id === user?.uid) sounds.playTurn();
-      }
-    }
-
-    if (count > linesCount) {
-      sounds.playWin();
-      getAICommentary(count, count >= 5).then(setCommentary);
-    }
-    setLinesCount(count);
-
-    if (count >= 5 && !gameEndedRef.current) {
-      gameEndedRef.current = true;
-      setStatus('won');
-      sounds.playWin();
-      confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
-      if (senderId === user?.uid) recordWin(user.uid);
-    }
-  }, [linesCount, user]);
+  const playersRef = useRef<PlayerInfo[]>([]);
+  playersRef.current = players;
+  const turnIdxRef = useRef(0);
+  turnIdxRef.current = currentTurnIdx;
 
   const calculateBingo = (board: BingoCell[]) => {
     const size = 5;
@@ -179,231 +50,261 @@ const App: React.FC = () => {
     return { count: lines.length, winningIndices: new Set(lines.flat()) };
   };
 
+  const applyRemoteMark = useCallback((value: number, nextTurnIdx: number, senderId: string) => {
+    const currentCells = cellsRef.current;
+    const targetCell = currentCells.find(c => c.value === value);
+    if (!targetCell || targetCell.isMarked) return;
+
+    // 효과음 재생
+    sounds.playPop();
+
+    const newCells = currentCells.map(cell => 
+      cell.value === value ? { ...cell, isMarked: true, markedBy: senderId } : cell
+    );
+
+    const { count, winningIndices } = calculateBingo(newCells);
+    const finalCells = newCells.map((c, i) => ({
+      ...c,
+      isWinningCell: winningIndices.has(i)
+    }));
+
+    setCells(finalCells);
+    setCurrentTurnIdx(nextTurnIdx);
+    
+    // 내 차례가 되었을 때 알림음
+    const nextPlayer = playersRef.current[nextTurnIdx];
+    if (nextPlayer?.id === myId) {
+      sounds.playTurn();
+    }
+
+    if (count > linesCount) {
+      sounds.playWin();
+      updateAICommentary(count);
+    }
+    setLinesCount(count);
+    if (count >= 5) {
+      setStatus('won');
+      sounds.playWin();
+      confetti({ particleCount: 200, spread: 80, origin: { y: 0.6 } });
+    }
+  }, [linesCount, myId]);
+
+  const updateAICommentary = async (count: number) => {
+    const isWinner = count >= 5;
+    const msg = await getAICommentary(count, isWinner);
+    setCommentary(msg);
+  };
+
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
-    if (status === 'playing' && matchId && user) {
+    if (status === 'playing' && matchId) {
       unsubscribe = subscribeToMatch(matchId, (payload) => {
         if (payload.action === 'join' || payload.action === 'presence') {
           setPlayers(prev => {
             if (prev.find(p => p.id === payload.playerId)) return prev;
-            const newPlayers = [...prev, { 
-              id: payload.playerId, 
-              name: payload.name, 
-              photoURL: payload.photoURL,
-              color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] 
-            }].sort((a, b) => a.id.localeCompare(b.id));
             sounds.playJoin();
+            const newPlayers = [...prev, { id: payload.playerId, name: payload.name, color: PLAYER_COLORS[prev.length % PLAYER_COLORS.length] }]
+              .sort((a, b) => a.id.localeCompare(b.id));
+            
             if (payload.action === 'join') {
-              publishMessage(matchId, { action: 'presence', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
-              setTimeout(syncState, 800);
+              publishMessage(matchId, { action: 'presence', playerId: myId, name: nickname });
             }
             return newPlayers;
           });
         } else if (payload.action === 'mark') {
-          handleMarkAction(payload.value, payload.senderId);
-        } else if (payload.action === 'sync_state') {
-          const markedVals = payload.markedValues as {value: number, senderId: string}[];
-          let updatedCells = [...cellsRef.current];
-          markedVals.forEach(mv => {
-            const idx = updatedCells.findIndex(c => c.value === mv.value);
-            if (idx !== -1) updatedCells[idx] = { ...updatedCells[idx], isMarked: true, markedBy: mv.senderId };
-          });
-          const { count, winningIndices } = calculateBingo(updatedCells);
-          setCells(updatedCells.map((c, i) => ({ ...c, isWinningCell: winningIndices.has(i) })));
-          setLinesCount(count);
-          setCurrentTurnIdx(payload.currentTurnIdx);
+          applyRemoteMark(payload.value, payload.nextTurnIdx, payload.senderId);
         }
       });
-      publishMessage(matchId, { action: 'join', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
+      publishMessage(matchId, { action: 'join', playerId: myId, name: nickname });
     }
-    return () => unsubscribe?.();
-  }, [status, matchId, user, handleMarkAction, syncState]);
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [status, matchId, myId, nickname, applyRemoteMark]);
 
-  const startGame = async () => {
-    if (!matchId.trim()) return alert("방 번호를 입력해주세요! 🏠");
-    const values = generateRandomBoard();
+  const startGame = () => {
+    if (!nickname.trim()) return alert("친구들이 부를 이름을 알려주세요! 😊");
+    if (!matchId.trim()) return alert("같이 할 방 번호를 적어주세요! 🏠");
+    localStorage.setItem('bingo_nickname', nickname);
+    const values = generateSeededBoard(matchId.trim().toLowerCase());
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
-    setPlayers([{ id: user!.uid, name: user!.displayName || user!.email?.split('@')[0] || "마스터", photoURL: user!.photoURL || "", color: PLAYER_COLORS[0] }]);
-    setCurrentTurnIdx(0);
-    gameEndedRef.current = false;
+    setPlayers([{ id: myId, name: nickname, color: PLAYER_COLORS[0] }]);
     setStatus('playing');
-    setActiveTab('game');
     sounds.playJoin();
-    setCommentary("친구들을 기다리고 있어요! 초대 버튼으로 공유하세요.");
+    setCommentary(`${nickname} 친구 반가워요! 게임을 시작해볼까요?`);
   };
 
   const handleCellClick = (val: number) => {
-    if (status !== 'playing' || players.length < 2) {
-      if (players.length < 2) setCommentary("친구를 기다려주세요! 👥");
+    if (status !== 'playing') return;
+    const isMyTurn = players.length > 0 && players[currentTurnIdx]?.id === myId;
+    if (!isMyTurn) {
+      setCommentary("지금은 친구 차례예요! 조금만 기다려줄래요? 🙏");
       return;
     }
-    const isMyTurn = players[currentTurnIdx]?.id === user?.uid;
-    if (!isMyTurn) return setCommentary("내 차례가 아니에요! 🍵");
-    
     const target = cells.find(c => c.value === val);
     if (target?.isMarked) return;
 
-    publishMessage(matchId, { action: 'mark', value: val, senderId: user?.uid });
-    handleMarkAction(val, user?.uid || "");
+    const nextTurnIdx = (currentTurnIdx + 1) % players.length;
+    publishMessage(matchId, { action: 'mark', value: val, nextTurnIdx, senderId: myId });
+    applyRemoteMark(val, nextTurnIdx, myId);
   };
 
-  const activePlayer = players[currentTurnIdx];
-  const isMyTurn = activePlayer?.id === user?.uid;
-
-  // Render Logic
-  if (isKakaoBrowser) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] p-8 text-center gap-6">
-      <div className="w-20 h-20 bg-[#FFD93D] rounded-full flex items-center justify-center text-white shadow-lg animate-bounce"><AlertCircle size={40} /></div>
-      <h2 className="text-xl font-black text-gray-700">카카오톡 브라우저 차단! 🖐️</h2>
-      <button onClick={handleOpenExternal} className="w-full py-4 bg-[#4D96FF] text-white font-black rounded-2xl flex items-center justify-center gap-2">외부 브라우저로 열기</button>
-    </div>
-  );
-
-  if (authLoading) return <div className="min-h-screen flex flex-col items-center justify-center bg-[#FFF9E3] font-black text-gray-400 gap-4"><div className="animate-spin text-4xl">✨</div>로딩 중...</div>;
+  const currPlayer = players[currentTurnIdx];
+  const isMyTurn = currPlayer?.id === myId;
+  const playerColorsMap = players.reduce((acc, p) => ({ ...acc, [p.id]: p.color }), {});
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset">
-      {/* Toast Feedback */}
-      {copyFeedback && <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown"><Check size={14} className="text-green-400"/><span className="font-black text-xs">링크 복사 완료!</span></div>}
+    <div className="min-h-screen flex flex-col items-center py-6 px-4 bg-[#FFF9E3]">
+      <header className="text-center mb-6">
+        <div className="flex items-center justify-center gap-2 mb-1">
+          <Sparkles className="text-[#FFD93D] animate-pulse" fill="#FFD93D"/>
+          <h1 className="text-4xl font-black text-[#FF69B4] tracking-tight animate__animated animate__bounceInDown" style={{ WebkitTextStroke: '1.5px white' }}>
+            우당탕탕! 팡팡 빙고
+          </h1>
+          <Sparkles className="text-[#FFD93D] animate-pulse" fill="#FFD93D"/>
+        </div>
+        <div className="flex justify-center items-center gap-2">
+           <span className="text-[10px] font-bold text-[#FF8E9E] tracking-widest uppercase bg-white px-3 py-1 rounded-full shadow-sm">Play with friends!</span>
+        </div>
+      </header>
 
-      {/* Main Viewport */}
-      <main className="flex-1 flex flex-col items-center w-full max-w-md mx-auto relative overflow-hidden">
-        
-        {/* TAB 1: GAME SCREEN */}
-        {activeTab === 'game' && (
-          <div className="w-full flex-1 flex flex-col p-4 animate__animated animate__fadeIn">
-            {!user ? (
-              <div className="flex-1 flex flex-col justify-center items-center text-center space-y-6">
-                <div className="text-7xl floating">🧸</div>
-                <h2 className="text-3xl font-black text-[#FF69B4]">팡팡 빙고!</h2>
-                <button onClick={() => loginWithGoogle()} className="w-full py-4 bg-white border-4 border-[#FFD93D] rounded-3xl shadow-[0_6px_0_#FFD93D] flex items-center justify-center gap-4 active:translate-y-1 active:shadow-none transition-all">
-                  <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6" alt="G"/>
-                  <span className="text-lg font-black">Google 로그인</span>
-                </button>
-              </div>
-            ) : status === 'idle' ? (
-              <div className="flex-1 flex flex-col justify-center space-y-6">
-                <div className="bg-white p-6 rounded-[2.5rem] shadow-[0_8px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-4">
-                  <div className="flex items-center gap-3 bg-[#FFF9E3] p-3 rounded-2xl border-2 border-dashed border-[#FFD93D]">
-                    <img src={user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`} className="w-12 h-12 rounded-xl shadow-sm" />
-                    <p className="text-lg font-black truncate">{user.displayName || "빙고왕"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-gray-400 ml-2">비밀 방 번호</label>
-                    <input type="text" value={matchId} onChange={(e)=>setMatchId(e.target.value)} placeholder="예: 1234" className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl p-4 text-xl font-black outline-none" />
-                  </div>
-                  <button onClick={startGame} className="w-full py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-2xl shadow-[0_6px_0_#E5B700] active:translate-y-1">방 만들기 / 입장</button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col">
-                {/* 콤팩트 헤더 */}
-                <div className="flex items-center justify-between mb-2">
-                  <div className={`flex items-center gap-2 px-3 py-1 rounded-full border-2 transition-all ${isMyTurn ? 'bg-[#FFD93D] border-[#E5B700] scale-105 shadow-md' : 'bg-white border-gray-100'}`}>
-                    <img src={activePlayer?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${activePlayer?.id}`} className="w-6 h-6 rounded-lg" style={{ backgroundColor: activePlayer?.color }} />
-                    <span className="text-xs font-black">{isMyTurn ? "내 차례 ✨" : activePlayer?.name}</span>
-                  </div>
-                  <div className="bg-white px-3 py-1 rounded-full border-2 border-pink-200 text-xs font-black text-[#FF69B4]">
-                    빙고 {linesCount} / 5 줄
-                  </div>
-                </div>
-
-                {/* AI 코멘터리 (작게) */}
-                <div className="mb-4 text-center">
-                  <p className="text-[11px] font-bold text-gray-500 italic">"{commentary}"</p>
-                </div>
-
-                {/* 빙고 보드 */}
-                <div className="flex-1 flex items-center justify-center">
-                  <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={players.reduce((acc,p)=>({...acc, [p.id]:p.color}), {})} />
-                </div>
-
-                {/* 우승 팝업 */}
-                {status === 'won' && (
-                   <div className="mt-4 p-4 bg-white rounded-3xl border-4 border-[#FFD93D] text-center animate__animated animate__jackInTheBox">
-                     <p className="text-2xl font-black text-[#FF69B4]">WINNER!</p>
-                     <p className="text-sm font-bold text-gray-500">{activePlayer?.name}님이 승리했어요!</p>
-                     <button onClick={()=>setStatus('idle')} className="mt-3 w-full py-3 bg-[#FFD93D] rounded-xl font-black">대기실로</button>
-                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 2: RANKING */}
-        {activeTab === 'rank' && (
-          <div className="w-full flex-1 p-6 flex flex-col animate__animated animate__fadeIn">
-            <h2 className="text-2xl font-black text-center mb-6">🏆 명예의 전당</h2>
-            <div className="flex-1 overflow-y-auto space-y-3 pb-24">
-              {rankings.map((r, i)=>(
-                <div key={r.uid} className={`flex items-center justify-between p-4 rounded-3xl border-2 ${i===0?'bg-yellow-50 border-yellow-300':'bg-white border-gray-100'}`}>
-                  <div className="flex items-center gap-3">
-                    <span className={`w-6 h-6 flex items-center justify-center rounded-full font-black text-[10px] text-white ${i===0?'bg-yellow-400':'bg-gray-300'}`}>{i+1}</span>
-                    <img src={r.photoURL} className="w-10 h-10 rounded-xl" />
-                    <span className="font-black truncate max-w-[100px]">{r.nickname}</span>
-                  </div>
-                  <p className="text-lg font-black text-[#FF69B4]">{r.wins}<span className="text-[10px] ml-1">WINS</span></p>
-                </div>
-              ))}
+      <main className="w-full max-w-md">
+        {status === 'idle' ? (
+          <div className="bg-white p-8 rounded-[3rem] shadow-[0_12px_0_#FFB3D9] border-4 border-[#FFD93D] space-y-6 animate__animated animate__fadeInUp">
+            <div className="text-center">
+               <div className="w-20 h-20 bg-[#FFF9E3] rounded-full mx-auto flex items-center justify-center text-4xl mb-2 shadow-inner">🎮</div>
+               <p className="text-lg font-black text-gray-700">새로운 게임 만들기</p>
             </div>
-          </div>
-        )}
+            
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-black text-[#FF6B6B] ml-2 flex items-center gap-1">
+                  <User size={14}/> 내 이름 (별명)
+                </label>
+                <input 
+                  type="text" 
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="예: 용감한사자"
+                  className="w-full bg-[#FFF9E3] border-3 border-[#FFD93D] rounded-2xl px-5 py-4 text-xl focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-black text-[#4D96FF] ml-2 flex items-center gap-1">
+                  <Users size={14}/> 비밀 방 번호
+                </label>
+                <input 
+                  type="text" 
+                  value={matchId}
+                  onChange={(e) => setMatchId(e.target.value)}
+                  placeholder="예: 1234"
+                  className="w-full bg-[#EBF3FF] border-3 border-[#4D96FF] rounded-2xl px-5 py-4 text-xl focus:outline-none transition-all placeholder:text-gray-300 bubble-shadow"
+                />
+              </div>
+            </div>
+            
+            <button 
+              onClick={startGame}
+              className="w-full py-5 bg-[#FFD93D] hover:bg-[#FFC300] text-[#4A4A4A] font-black text-2xl rounded-2xl shadow-[0_8px_0_#E5B700] transition-all active:translate-y-1 active:shadow-none flex items-center justify-center gap-3"
+            >
+              <Play fill="currentColor" size={24} /> 게임 시작하기!
+            </button>
 
-        {/* TAB 3: PROFILE */}
-        {activeTab === 'profile' && (
-          <div className="w-full flex-1 p-8 flex flex-col items-center justify-center animate__animated animate__fadeIn">
-            {user ? (
-              <div className="bg-white p-8 rounded-[3rem] border-4 border-[#FFD93D] w-full text-center space-y-6">
-                <div className="relative inline-block">
-                  <img src={user.photoURL || ""} className="w-24 h-24 rounded-[2rem] border-4 border-[#FFF9E3] shadow-lg" />
-                  <div className="absolute -bottom-2 -right-2 bg-[#FFD93D] p-2 rounded-full shadow-md"><Sparkles size={16} /></div>
+            <button 
+              onClick={() => window.dispatchEvent(new Event('beforeinstallprompt'))}
+              className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl text-xs flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
+            >
+              <Download size={14} /> 우리집 화면에 앱 설치하기
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Turn Card */}
+            <div className={`p-4 rounded-3xl border-4 transition-all duration-300 flex items-center justify-between ${isMyTurn ? 'bg-[#FFEB3B]/30 border-[#FFD93D] my-turn-active animate__animated animate__pulse animate__infinite' : 'bg-white border-gray-100 shadow-md'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg transform transition-transform ${isMyTurn ? 'rotate-12 scale-110' : ''}`} style={{ backgroundColor: currPlayer?.color }}>
+                  {isMyTurn ? '🦁' : '👤'}
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black">{user.displayName}</h3>
-                  <p className="text-sm font-bold text-gray-400">{user.email}</p>
+                  <div className="flex items-center gap-1">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">Current Turn</p>
+                    {isMyTurn && <BellRing size={10} className="text-[#FF69B4] animate-bounce"/>}
+                  </div>
+                  <p className="text-xl font-black text-gray-700">
+                    {isMyTurn ? <span className="text-[#FF69B4]">내 차례예요! ✨</span> : <span>{currPlayer?.name || '기다려요...'}</span>}
+                  </p>
                 </div>
-                <div className="bg-pink-50 p-4 rounded-3xl border-2 border-dashed border-pink-200">
-                  <p className="text-[10px] font-black text-pink-400 uppercase tracking-widest">Total Achievements</p>
-                  <p className="text-3xl font-black text-[#FF69B4]">기록된 승리 없음</p>
-                  <p className="text-[10px] font-bold text-pink-300 mt-1">곧 업데이트 예정입니다!</p>
-                </div>
-                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-xs uppercase tracking-widest flex items-center gap-2 mx-auto"><LogOut size={12}/> 로그아웃</button>
               </div>
-            ) : <p className="font-black text-gray-400">로그인이 필요합니다.</p>}
+              <div className="flex flex-col items-end">
+                <div className="bg-gray-100 px-3 py-1 rounded-full flex items-center gap-1 mb-2">
+                   <Users size={12} className="text-gray-400"/>
+                   <span className="text-[10px] font-black text-gray-500">{players.length}명 대결 중</span>
+                </div>
+                <div className="flex -space-x-3">
+                   {players.map(p => (
+                     <div key={p.id} className="w-6 h-6 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-[10px] text-white font-bold" style={{ backgroundColor: p.color }}>
+                       {p.name[0]}
+                     </div>
+                   ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="bg-white p-4 rounded-2xl border-2 border-[#FFD93D] text-sm font-bold text-gray-600 flex gap-3 items-center shadow-sm">
+                <div className="bg-[#FFF9E3] p-2 rounded-xl"><MessageCircle size={20} className="text-[#FFD93D]"/></div>
+                <p className="flex-1 italic leading-tight">"{commentary}"</p>
+              </div>
+            </div>
+
+            <div className={`transition-transform duration-300 ${isMyTurn ? 'scale-[1.02]' : 'scale-100'}`}>
+              <BingoBoard cells={cells} onCellClick={handleCellClick} status={status} playerColors={playerColorsMap} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-white p-4 rounded-3xl border-3 border-pink-100 flex flex-col items-center shadow-sm overflow-hidden relative">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-pink-50 rounded-bl-full flex items-center justify-center">🎉</div>
+                <span className="text-[10px] font-black text-gray-400 uppercase">My Bingo</span>
+                <span className="text-3xl font-black text-[#FF69B4]">{linesCount} / 5</span>
+              </div>
+              <div className="bg-white p-4 rounded-3xl border-3 border-blue-100 flex flex-col items-center shadow-sm overflow-hidden relative">
+                <div className="absolute top-0 right-0 w-8 h-8 bg-blue-50 rounded-bl-full flex items-center justify-center">🔑</div>
+                <span className="text-[10px] font-black text-gray-400 uppercase">Room Code</span>
+                <span className="text-2xl font-black text-[#4D96FF]">{matchId}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-center pt-4">
+              {status === 'won' ? (
+                <div className="text-center space-y-4 p-6 bg-white rounded-[3rem] border-4 border-[#FFD93D] shadow-xl animate__animated animate__jackInTheBox">
+                  <div className="text-6xl mb-2">🏆</div>
+                  <h2 className="text-4xl font-black text-[#FF69B4]" style={{ WebkitTextStroke: '1px white' }}>와아! 우승이에요!</h2>
+                  <p className="text-gray-500 font-bold">친구들과 한 번 더 해볼까요?</p>
+                  <button onClick={() => setStatus('idle')} className="w-full px-10 py-5 bg-[#FFD93D] text-[#4A4A4A] font-black text-xl rounded-2xl shadow-[0_6px_0_#E5B700] hover:translate-y-1 hover:shadow-none transition-all flex items-center justify-center gap-2">
+                    <PartyPopper size={24}/> 다시 한 판 더!
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => confirm("정말 게임을 그만할까요?") && setStatus('idle')} className="flex items-center gap-2 text-gray-400 hover:text-[#FF6B6B] transition-colors text-xs font-bold uppercase tracking-widest bg-white/50 px-4 py-2 rounded-full">
+                  <LogOut size={12} /> 게임 나가기
+                </button>
+              )}
+            </div>
           </div>
         )}
       </main>
 
-      {/* BOTTOM NAVBAR */}
-      {user && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t-2 border-gray-100 flex justify-around items-center px-4 pb-8 pt-4 z-50">
-          <NavButton active={activeTab==='game'} icon={<Gamepad2 size={24}/>} label="게임" onClick={()=>setActiveTab('game')} />
-          <NavButton active={activeTab==='rank'} icon={<Trophy size={24}/>} label="순위" onClick={()=>setActiveTab('rank')} />
-          {status === 'playing' && (
-            <button onClick={handleShare} className="w-14 h-14 -mt-10 bg-[#4D96FF] text-white rounded-full shadow-lg shadow-blue-200 border-4 border-white flex items-center justify-center active:scale-95 transition-all">
-              <Share2 size={24}/>
-            </button>
-          )}
-          <NavButton active={activeTab==='profile'} icon={<UserIcon size={24}/>} label="정보" onClick={()=>setActiveTab('profile')} />
-          {status === 'playing' ? (
-            <NavButton active={false} icon={<LogOut size={24} className="text-red-300"/>} label="종료" onClick={() => confirm("게임을 종료할까요?") && setStatus('idle')} />
-          ) : (
-             <div className="w-[44px]"></div> // Spacing
-          )}
-        </nav>
-      )}
+      <footer className="mt-auto pt-12 text-[10px] text-gray-400 font-bold tracking-widest text-center">
+        <div className="flex items-center justify-center gap-2 mb-1">
+           <div className="w-4 h-4 rounded-full bg-pink-200"></div>
+           <div className="w-4 h-4 rounded-full bg-yellow-200"></div>
+           <div className="w-4 h-4 rounded-full bg-blue-200"></div>
+        </div>
+        FRIENDS BINGO V2 • CUTE & DYNAMIC ✨
+      </footer>
     </div>
   );
 };
-
-const NavButton: React.FC<{ active: boolean; icon: React.ReactNode; label: string; onClick: () => void }> = ({ active, icon, label, onClick }) => (
-  <button onClick={onClick} className={`flex flex-col items-center gap-1 transition-all ${active ? 'text-[#FF69B4] scale-110' : 'text-gray-300'}`}>
-    {icon}
-    <span className="text-[9px] font-black uppercase tracking-tighter">{label}</span>
-    {active && <div className="w-1 h-1 bg-[#FF69B4] rounded-full mt-0.5"></div>}
-  </button>
-);
 
 export default App;

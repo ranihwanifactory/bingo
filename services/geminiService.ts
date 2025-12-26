@@ -21,14 +21,16 @@ export const getAICommentary = async (lines: number, isWinner: boolean): Promise
   }
 };
 
-/**
- * 각 플레이어마다 완전히 다른 보드 배열을 가질 수 있도록 
- * 시드 없이 무작위 셔플을 수행합니다.
- */
-export const generateRandomBoard = (): number[] => {
+export const generateSeededBoard = (seed: string): number[] => {
   const nums = Array.from({ length: 25 }, (_, i) => i + 1);
+  let seedNum = 0;
+  for (let i = 0; i < seed.length; i++) seedNum += seed.charCodeAt(i);
+  const seededRandom = () => {
+    seedNum = (seedNum * 9301 + 49297) % 233280;
+    return seedNum / 233280;
+  };
   for (let i = nums.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(seededRandom() * (i + 1));
     [nums[i], nums[j]] = [nums[j], nums[i]];
   }
   return nums;
