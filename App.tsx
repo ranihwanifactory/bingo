@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BingoCell, GameStatus, PlayerInfo, UserRanking } from './types';
-import { generateSeededBoard, getAICommentary } from './services/geminiService';
+import { generateRandomBoard, getAICommentary } from './services/geminiService';
 import { publishMessage, subscribeToMatch } from './services/syncService';
 import { sounds } from './services/soundService';
 import { loginAnonymously, updateUserInfo, recordWin, getTopRankings, auth } from './services/firebaseService';
@@ -143,7 +143,8 @@ const App: React.FC = () => {
     localStorage.setItem('bingo_nickname', nickname);
     await updateUserInfo(currentUser.uid, nickname);
 
-    const values = generateSeededBoard(matchId.trim().toLowerCase());
+    // 각 플레이어마다 무작위로 다른 숫자 배열을 생성합니다.
+    const values = generateRandomBoard();
     setCells(values.map(v => ({ value: v, isMarked: false, isWinningCell: false })));
     setLinesCount(0);
     setPlayers([{ id: currentUser.uid, name: nickname, color: PLAYER_COLORS[0] }]);
