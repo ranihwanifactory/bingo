@@ -1,6 +1,15 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { 
+  getAuth, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  onAuthStateChanged, 
+  signOut,
+  User 
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { 
   getFirestore, 
   doc, 
@@ -14,7 +23,7 @@ import {
   limit, 
   getDocs 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-import { UserRanking } from "../types";
+import { UserRanking, H2HRecord } from "../types";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA3pP5KlWjmVrCnvWN217IAejSxCBRgd0U",
@@ -29,25 +38,48 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-export const loginAnonymously = async () => {
-  return await signInAnonymously(auth);
+const googleProvider = new GoogleAuthProvider();
+
+export const loginWithGoogle = async () => {
+  return await signInWithPopup(auth, googleProvider);
 };
 
-export const updateUserInfo = async (uid: string, nickname: string) => {
+export const logout = async () => {
+  return await signOut(auth);
+};
+
+export const getUserProfile = async (uid: string): Promise<UserRanking | null> => {
+  const userRef = doc(db, "users", uid);
+  const userSnap = await getDoc(userRef);
+  if (userSnap.exists()) {
+    const data = userSnap.data();
+    return {
+      uid: userSnap.id,
+      nickname: data.nickname || "신비한 빙고술사",
+      wins: data.wins || 0,
+      photoURL: data.photoURL
+    };
+  }
+  return null;
+};
+
+export const updateUserInfo = async (uid: string, nickname: string, photoURL?: string) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
   
+  const userData = {
+    nickname: nickname,
+    photoURL: photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
+    lastLogin: new Date()
+  };
+
   if (!userSnap.exists()) {
     await setDoc(userRef, {
-      nickname: nickname,
-      wins: 0,
-      lastLogin: new Date()
+      ...userData,
+      wins: 0
     });
   } else {
-    await updateDoc(userRef, {
-      nickname: nickname,
-      lastLogin: new Date()
-    });
+    await updateDoc(userRef, userData);
   }
 };
 
@@ -56,6 +88,46 @@ export const recordWin = async (uid: string) => {
   await updateDoc(userRef, {
     wins: increment(1)
   });
+};
+
+/**
+ * 두 사용자 간의 상대 전적을 가져옵니다.
+ */
+export const getH2HRecord = async (uid1: string, uid2: string): Promise<{ [key: string]: number }> => {
+  const id = [uid1, uid2].sort().join('_');
+  const h2hRef = doc(db, "h2h_records", id);
+  const h2hSnap = await getDoc(h2hRef);
+  
+  if (h2hSnap.exists()) {
+    const data = h2hSnap.data();
+    return {
+      [uid1]: data[uid1] || 0,
+      [uid2]: data[uid2] || 0
+    };
+  }
+  
+  return { [uid1]: 0, [uid2]: 0 };
+};
+
+/**
+ * 승리 시 상대 전적을 업데이트합니다.
+ */
+export const updateH2HRecord = async (winnerUid: string, loserUid: string) => {
+  const id = [winnerUid, loserUid].sort().join('_');
+  const h2hRef = doc(db, "h2h_records", id);
+  const h2hSnap = await getDoc(h2hRef);
+  
+  if (!h2hSnap.exists()) {
+    await setDoc(h2hRef, {
+      [winnerUid]: 1,
+      [loserUid]: 0,
+      playerIds: [winnerUid, loserUid]
+    });
+  } else {
+    await updateDoc(h2hRef, {
+      [winnerUid]: increment(1)
+    });
+  }
 };
 
 export const getTopRankings = async (count: number = 10): Promise<UserRanking[]> => {
@@ -68,8 +140,9 @@ export const getTopRankings = async (count: number = 10): Promise<UserRanking[]>
     const data = doc.data();
     rankings.push({
       uid: doc.id,
-      nickname: data.nickname || "익명 친구",
-      wins: data.wins || 0
+      nickname: data.nickname || "신비한 빙고술사",
+      wins: data.wins || 0,
+      photoURL: data.photoURL
     });
   });
   return rankings;
