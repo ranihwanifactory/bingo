@@ -1,16 +1,6 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  createUserWithEmailAndPassword, 
-  signInWithEmailAndPassword,
-  onAuthStateChanged, 
-  signOut,
-  User 
-} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getAuth, signInAnonymously, onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import { 
   getFirestore, 
   doc, 
@@ -39,44 +29,25 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-const googleProvider = new GoogleAuthProvider();
-
-export const loginWithGoogle = async () => {
-  return await signInWithPopup(auth, googleProvider);
+export const loginAnonymously = async () => {
+  return await signInAnonymously(auth);
 };
 
-export const loginWithEmail = async (email: string, pass: string) => {
-  try {
-    return await signInWithEmailAndPassword(auth, email, pass);
-  } catch (error: any) {
-    if (error.code === 'auth/user-not-found') {
-      return await createUserWithEmailAndPassword(auth, email, pass);
-    }
-    throw error;
-  }
-};
-
-export const logout = async () => {
-  return await signOut(auth);
-};
-
-export const updateUserInfo = async (uid: string, nickname: string, photoURL?: string) => {
+export const updateUserInfo = async (uid: string, nickname: string) => {
   const userRef = doc(db, "users", uid);
   const userSnap = await getDoc(userRef);
   
-  const userData = {
-    nickname: nickname,
-    photoURL: photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`,
-    lastLogin: new Date()
-  };
-
   if (!userSnap.exists()) {
     await setDoc(userRef, {
-      ...userData,
-      wins: 0
+      nickname: nickname,
+      wins: 0,
+      lastLogin: new Date()
     });
   } else {
-    await updateDoc(userRef, userData);
+    await updateDoc(userRef, {
+      nickname: nickname,
+      lastLogin: new Date()
+    });
   }
 };
 
@@ -97,9 +68,8 @@ export const getTopRankings = async (count: number = 10): Promise<UserRanking[]>
     const data = doc.data();
     rankings.push({
       uid: doc.id,
-      nickname: data.nickname || "신비한 빙고술사",
-      wins: data.wins || 0,
-      photoURL: data.photoURL
+      nickname: data.nickname || "익명 친구",
+      wins: data.wins || 0
     });
   });
   return rankings;

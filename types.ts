@@ -12,12 +12,10 @@ export interface PlayerInfo {
   id: string;
   name: string;
   color: string;
-  photoURL?: string;
 }
 
 export interface UserRanking {
   uid: string;
   nickname: string;
   wins: number;
-  photoURL?: string;
 }
