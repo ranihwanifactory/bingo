@@ -15,47 +15,80 @@ export default function App() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [view, setView] = useState<'lobby' | 'leaderboard'>('lobby');
+  const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
       if (authUser) {
         setUser(authUser);
-        const userRef = doc(db, 'users', authUser.uid);
-        const userSnap = await getDoc(userRef);
-        
-        if (userSnap.exists()) {
-          setProfile(userSnap.data() as UserProfile);
-        } else {
-          const newProfile: UserProfile = {
-            uid: authUser.uid,
-            email: authUser.email || '',
-            displayName: authUser.displayName || '빙고용사',
-            photoURL: authUser.photoURL || '',
-            wins: 0,
-            losses: 0,
-            gamesPlayed: 0
-          };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile);
+        try {
+          const userRef = doc(db, 'users', authUser.uid);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            setProfile(userSnap.data() as UserProfile);
+          } else {
+            const newProfile: UserProfile = {
+              uid: authUser.uid,
+              email: authUser.email || '',
+              displayName: authUser.displayName || '빙고용사',
+              photoURL: authUser.photoURL || '',
+              wins: 0,
+              losses: 0,
+              gamesPlayed: 0
+            };
+            await setDoc(userRef, newProfile);
+            setProfile(newProfile);
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
+          // Handled by safeProfile fallback
         }
       } else {
         setUser(null);
         setProfile(null);
         setCurrentRoomId(null);
       }
+      setInitializing(false);
     });
     return unsubscribe;
   }, []);
+
+  if (initializing) {
+    return (
+      <div className="min-h-screen bg-pink-50 flex flex-col items-center justify-center">
+        <div className="bg-white p-12 rounded-[40px] shadow-2xl flex flex-col items-center pop-in">
+          <div className="relative mb-6">
+            <i className="fas fa-dice-five text-6xl text-pink-500 animate-bounce"></i>
+            <div className="absolute -bottom-2 -right-2 bg-yellow-400 w-6 h-6 rounded-full animate-ping"></div>
+          </div>
+          <p className="text-pink-600 font-bold text-2xl mb-2">슈퍼 빙고 히어로</p>
+          <p className="text-gray-400 text-sm">로딩 중입니다...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <Login />;
   }
 
+  // Ensure profile is always available if user is logged in
+  const safeProfile: UserProfile = profile || {
+    uid: user.uid,
+    displayName: user.displayName || '빙고용사',
+    email: user.email || '',
+    photoURL: user.photoURL || '',
+    wins: 0,
+    losses: 0,
+    gamesPlayed: 0
+  };
+
   if (currentRoomId) {
     return (
       <GameRoom 
         roomId={currentRoomId} 
-        user={profile!} 
+        user={safeProfile} 
         onExit={() => setCurrentRoomId(null)} 
       />
     );
@@ -64,14 +97,14 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar 
-        profile={profile!} 
+        profile={safeProfile} 
         onShowLobby={() => setView('lobby')}
         onShowLeaderboard={() => setView('leaderboard')}
       />
       
       <main className="flex-grow container mx-auto px-4 py-8">
         {view === 'lobby' ? (
-          <Lobby onJoinRoom={setCurrentRoomId} user={profile!} />
+          <Lobby onJoinRoom={setCurrentRoomId} user={safeProfile} />
         ) : (
           <Leaderboard />
         )}
