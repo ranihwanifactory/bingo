@@ -18,9 +18,9 @@ import {
 import { onAuthStateChanged, User } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import BingoBoard from './components/BingoBoard';
 import { 
-  Gamepad2, Trophy, User as UserIcon, LogOut, 
-  Sparkles, Check, Medal,
-  MessageCircle, PlusCircle, LogIn, Swords, ExternalLink, AlertCircle
+  Gamepad2, Trophy, User as UserIcon, Share2, LogOut, 
+  Sparkles, Check, AlertCircle, Medal,
+  MessageCircle, PlusCircle, LogIn, Swords, Copy
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -40,7 +40,6 @@ const App: React.FC = () => {
   const [currentTurnIdx, setCurrentTurnIdx] = useState(0);
   const [rankings, setRankings] = useState<UserRanking[]>([]);
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const [isExternalBrowserRequired, setIsExternalBrowserRequired] = useState(false);
 
   const playersRef = useRef<PlayerInfo[]>([]);
   playersRef.current = players;
@@ -49,27 +48,6 @@ const App: React.FC = () => {
   const currentTurnIdxRef = useRef(0);
   currentTurnIdxRef.current = currentTurnIdx;
   const gameEndedRef = useRef(false);
-
-  // 브라우저 환경 체크 (카카오톡 등 인앱 브라우저 대응)
-  useEffect(() => {
-    const ua = navigator.userAgent.toLowerCase();
-    const isKakao = ua.indexOf('kakaotalk') > -1;
-    const isLine = ua.indexOf('line') > -1;
-    if (isKakao || isLine) {
-      setIsExternalBrowserRequired(true);
-    }
-  }, []);
-
-  const resetAllState = useCallback(() => {
-    setStatus('idle');
-    setActiveTab('game');
-    setMatchId('');
-    setCells([]);
-    setLinesCount(0);
-    setPlayers([]);
-    setCurrentTurnIdx(0);
-    setCommentary("친구들과 함께하는 신나는 빙고 타임! 🌈");
-  }, []);
 
   const fetchUserStats = useCallback(async (uid: string) => {
     try {
@@ -114,24 +92,19 @@ const App: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const roomFromUrl = params.get('room');
-    if (roomFromUrl) {
-      setMatchId(roomFromUrl.toUpperCase());
-    }
+    if (roomFromUrl) setMatchId(roomFromUrl);
 
     const unsub = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      setAuthLoading(false);
       if (u) {
-        setUser(u);
         await updateUserInfo(u.uid, u.displayName || u.email?.split('@')[0] || "빙고 마스터", u.photoURL || "");
         fetchUserStats(u.uid);
-      } else {
-        setUser(null);
-        resetAllState();
       }
-      setAuthLoading(false);
     });
 
     return () => unsub();
-  }, [fetchUserStats, resetAllState]);
+  }, [fetchUserStats]);
 
   useEffect(() => {
     if (activeTab === 'rank') {
@@ -243,7 +216,7 @@ const App: React.FC = () => {
 
             if (payload.action === 'join') {
               publishMessage(matchId, { action: 'presence', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
-              setTimeout(syncState, 800);
+              setTimeout(syncState, 500);
             }
             return newPlayersList;
           });
@@ -266,15 +239,14 @@ const App: React.FC = () => {
           setCurrentTurnIdx(payload.currentTurnIdx);
         }
       });
-      // 입장 즉시 참여 알림
       publishMessage(matchId, { action: 'join', playerId: user.uid, name: user.displayName || user.email?.split('@')[0], photoURL: user.photoURL });
     }
     return () => unsubscribe?.();
   }, [status, matchId, user, handleMarkAction, syncState, fetchH2HRecords]);
 
   const startGame = async (forcedId?: string) => {
-    const idToUse = (forcedId || matchId || '').trim().toUpperCase();
-    if (!idToUse) return alert("방 번호가 필요해요! 🏠");
+    const idToUse = forcedId || matchId;
+    if (!idToUse.trim()) return alert("방 번호가 필요해요! 🏠");
     
     setMatchId(idToUse);
     const values = generateRandomBoard();
@@ -306,15 +278,6 @@ const App: React.FC = () => {
     handleMarkAction(val, user?.uid || "");
   };
 
-  const openInChrome = () => {
-    const url = window.location.href;
-    if (navigator.userAgent.match(/Android/i)) {
-      window.location.href = `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`;
-    } else {
-      alert("오른쪽 상단 메뉴(...)를 눌러 '다른 브라우저로 열기' 또는 'Safari로 열기'를 선택해주세요!");
-    }
-  };
-
   const activePlayer = players[currentTurnIdx];
   const isMyTurn = activePlayer?.id === user?.uid;
 
@@ -322,19 +285,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FFF9E3] text-[#4A4A4A] select-none safe-area-inset overflow-hidden">
-      {/* 카카오톡 등 인앱 브라우저 안내 */}
-      {isExternalBrowserRequired && (
-        <div className="bg-[#4D96FF] text-white p-3 flex items-center justify-between animate__animated animate__fadeInDown z-[100]">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={18} />
-            <span className="text-xs font-black">더 원활한 게임을 위해 전용 브라우저로 즐겨요!</span>
-          </div>
-          <button onClick={openInChrome} className="bg-white text-[#4D96FF] px-3 py-1 rounded-full text-[10px] font-black flex items-center gap-1 shadow-sm">
-            <ExternalLink size={12} /> 브라우저로 열기
-          </button>
-        </div>
-      )}
-
       {copyFeedback && <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[100] bg-gray-800 text-white px-6 py-2 rounded-full flex items-center gap-2 shadow-2xl animate__animated animate__fadeInDown"><Check size={14} className="text-green-400"/><span className="font-black text-xs">초대 링크 복사 완료!</span></div>}
 
       <main className="flex-1 flex flex-col items-center w-full max-w-md mx-auto relative px-4">
@@ -373,22 +323,14 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="space-y-3">
-                      <div className="relative">
-                        <input 
-                          type="text" 
-                          value={matchId} 
-                          onChange={(e)=>setMatchId(e.target.value.toUpperCase())} 
-                          placeholder="방 번호 입력" 
-                          className={`w-full bg-[#F0F7FF] border-4 rounded-[1.5rem] p-4 text-center text-2xl font-black outline-none placeholder:text-gray-300 transition-colors ${matchId ? 'border-[#4D96FF]' : 'border-gray-100'}`} 
-                        />
-                        {matchId && (
-                           <button onClick={()=>setMatchId('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-300 font-black">X</button>
-                        )}
-                      </div>
-                      <button 
-                        onClick={() => startGame()} 
-                        className={`w-full py-5 text-white font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#2B66CC] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2 ${matchId ? 'bg-[#4D96FF]' : 'bg-gray-300 shadow-none grayscale cursor-not-allowed'}`}
-                      >
+                      <input 
+                        type="text" 
+                        value={matchId} 
+                        onChange={(e)=>setMatchId(e.target.value.toUpperCase())} 
+                        placeholder="방 번호 입력" 
+                        className="w-full bg-[#F0F7FF] border-4 border-[#4D96FF] rounded-[1.5rem] p-4 text-center text-2xl font-black outline-none placeholder:text-gray-300" 
+                      />
+                      <button onClick={() => startGame()} className="w-full py-5 bg-[#4D96FF] text-white font-black text-xl rounded-[1.5rem] shadow-[0_8px_0_#2B66CC] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-2">
                         <LogIn size={24} /> 입장하기
                       </button>
                     </div>
@@ -398,7 +340,7 @@ const App: React.FC = () => {
             ) : (
               <div className="flex-1 flex flex-col">
                 {/* 상단 플레이어 리스트 */}
-                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide px-1">
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 scrollbar-hide">
                   {players.map((p, idx) => (
                     <div 
                       key={p.id}
@@ -500,7 +442,7 @@ const App: React.FC = () => {
                   <p className="text-xs font-black text-[#FFD93D] uppercase tracking-widest mb-2">누적 승리</p>
                   <p className="text-6xl font-black text-[#FF69B4]">{userStats?.wins || 0}</p>
                 </div>
-                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-sm flex items-center gap-2 mx-auto mt-4 py-2 px-4 border-2 border-gray-50 rounded-2xl">
+                <button onClick={()=>logout()} className="text-gray-300 hover:text-red-400 font-black text-sm flex items-center gap-2 mx-auto">
                   <LogOut size={16}/> 로그아웃
                 </button>
               </div>
