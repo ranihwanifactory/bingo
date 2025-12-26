@@ -1,7 +1,7 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Always use the process.env.API_KEY directly as per guidelines
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getAICommentary = async (lines: number, isWinner: boolean): Promise<string> => {
   try {
@@ -15,6 +15,7 @@ export const getAICommentary = async (lines: number, isWinner: boolean): Promise
       config: { maxOutputTokens: 100 }
     });
 
+    // Directly access the .text property on the response object
     return response.text || "와아! 정말 대단한 실력이에요! 🌟";
   } catch (error) {
     return "우리 친구, 조금만 더 힘내요! 할 수 있어요! 화이팅! 🎈";
