@@ -41,7 +41,7 @@ export default function App() {
           }
         } catch (error) {
           console.error("Error fetching user profile:", error);
-          // Fallback handled by safeProfile in render
+          // profile remains null, but safeProfile will use authUser data
         }
       } else {
         setUser(null);
@@ -72,7 +72,7 @@ export default function App() {
     return <Login />;
   }
 
-  // Ensure profile is always available if user is logged in
+  // Ensure safeProfile always has essential fields if user is present
   const safeProfile: UserProfile = profile || {
     uid: user.uid,
     displayName: user.displayName || '빙고용사',
