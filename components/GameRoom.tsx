@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   doc, 
@@ -6,11 +5,10 @@ import {
   updateDoc, 
   arrayUnion, 
   increment, 
-  getDoc, 
   runTransaction
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Room, UserProfile, RoomStatus, PlayerInfo } from '../types';
+import { Room, UserProfile, RoomStatus } from '../types';
 
 interface GameRoomProps {
   roomId: string;
@@ -49,6 +47,8 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
       } else {
         onExit();
       }
+    }, (error) => {
+      console.error("Firestore snapshot error:", error);
     });
     return unsubscribe;
   }, [roomId, onExit, winnerFound]);
@@ -111,7 +111,6 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
         handleWin();
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bingoCount]);
 
   const handleWin = async () => {
@@ -121,13 +120,11 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
       const data = snap.data() as Room;
       if (data.status === RoomStatus.FINISHED) return;
 
-      // Update room state
       transaction.update(roomRef, { 
         status: RoomStatus.FINISHED,
         winner: user.uid
       });
 
-      // Update all players stats
       data.players.forEach(p => {
         const userRef = doc(db, 'users', p.uid);
         if (p.uid === user.uid) {
@@ -194,7 +191,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
     <div className="min-h-screen bg-pink-100 flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-5xl flex flex-col lg:flex-row gap-6">
         
-        {/* Sidebar: Players and Stats */}
+        {/* Sidebar */}
         <div className="lg:w-1/3 flex flex-col gap-4">
           <div className="bg-white rounded-3xl p-6 shadow-xl border-t-8 border-pink-500">
             <div className="flex items-center justify-between mb-4">
@@ -227,8 +224,8 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
                       {room.status === RoomStatus.PLAYING ? (
                         <p className="text-xs text-pink-500 font-bold">{p.bingoCount} 빙고</p>
                       ) : (
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${p.ready ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                          <i className={`fas ${p.ready ? 'fa-check-circle' : 'fa-clock'}`}></i>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm transition-colors ${p.ready ? 'bg-green-100 text-green-600' : 'bg-orange-50 text-orange-400'}`}>
+                          <i className={`fas ${p.ready ? 'fa-check-circle' : 'fa-clock animate-pulse'}`}></i>
                           {p.ready ? '준비완료' : '대기중'}
                         </span>
                       )}
@@ -314,11 +311,6 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
                       <div className="w-3 h-3 bg-blue-500 rounded-full animate-ping"></div>
                       방장이 게임을 시작하기를 기다리고 있어요
                     </div>
-                    {currentUserInfo?.ready ? (
-                      <p className="text-green-500 font-bold">당신은 준비되었습니다! 잠시만 기다려주세요.</p>
-                    ) : (
-                      <p className="text-pink-500 font-bold animate-bounce">왼쪽 아래의 '준비하기' 버튼을 눌러주세요!</p>
-                    )}
                   </div>
                 )}
               </div>
@@ -331,7 +323,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-500">진행 번호: {selectedNumbers.length}개</p>
-                    {isMyTurn && <p className="text-pink-600 font-bold animate-pulse">🔥 당신의 차례! 숫자를 선택하세요</p>}
+                    {isMyTurn && <p className="text-pink-600 font-bold animate-pulse">🔥 당신의 차례!</p>}
                   </div>
                 </div>
 
@@ -355,12 +347,6 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
                         `}
                       >
                         {num}
-                        {isLastSelected && (
-                          <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-4 w-4 bg-yellow-500"></span>
-                          </span>
-                        )}
                       </button>
                     );
                   })}
@@ -372,14 +358,12 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
                       <i className="fas fa-trophy"></i>
                     </div>
                     <h2 className="text-5xl font-black mb-2 text-gray-800">빙고 완성!</h2>
-                    <div className="bg-pink-50 px-8 py-4 rounded-3xl mb-8">
-                      <p className="text-2xl font-bold text-pink-600">
-                        {room.winner === user.uid ? '🎉 축하합니다! 당신이 승리했어요!' : `😢 ${players.find(p => p.uid === room.winner)?.displayName}님이 승리했어요.`}
-                      </p>
-                    </div>
+                    <p className="text-2xl font-bold text-pink-600 mb-8">
+                      {room.winner === user.uid ? '🎉 축하합니다! 승리했어요!' : '😢 아쉽네요! 다음에 다시 도전해요!'}
+                    </p>
                     <button 
                       onClick={onExit}
-                      className="px-16 py-5 bg-pink-500 text-white rounded-2xl font-bold text-2xl shadow-xl hover:bg-pink-600 transition-all active:scale-95 transform hover:-translate-y-1"
+                      className="px-16 py-5 bg-pink-500 text-white rounded-2xl font-bold text-2xl shadow-xl hover:bg-pink-600 transition-all active:scale-95"
                     >
                       로비로 돌아가기
                     </button>

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   collection, 
@@ -9,8 +8,7 @@ import {
   doc, 
   updateDoc, 
   arrayUnion, 
-  getDoc,
-  serverTimestamp
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { UserProfile, Room, RoomStatus, PlayerInfo } from '../types';
@@ -37,12 +35,16 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
         roomList.push({ id: doc.id, ...doc.data() } as Room);
       });
       setRooms(roomList);
+    }, (err) => {
+      console.error("Lobby snapshot error:", err);
+      setError('방 목록을 불러오는 중 오류가 발생했습니다.');
     });
     return unsubscribe;
   }, []);
 
   const createRoom = async () => {
     setLoading(true);
+    setError('');
     try {
       const player: PlayerInfo = {
         uid: user.uid,
@@ -53,7 +55,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
         bingoCount: 0
       };
       
-      const newRoom = {
+      const newRoomData = {
         hostId: user.uid,
         status: RoomStatus.WAITING,
         players: [player],
@@ -62,10 +64,15 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
         createdAt: Date.now()
       };
       
-      const docRef = await addDoc(collection(db, 'rooms'), newRoom);
+      const docRef = await addDoc(collection(db, 'rooms'), newRoomData);
       onJoinRoom(docRef.id);
-    } catch (err) {
-      setError('방을 만들 수 없어요.');
+    } catch (err: any) {
+      console.error("Create room error details:", err);
+      if (err.code === 'permission-denied') {
+        setError('데이터베이스 권한이 없습니다. Firebase Rules 설정을 확인해주세요.');
+      } else {
+        setError(`방을 만들 수 없어요: ${err.message || '알 수 없는 오류'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -73,11 +80,12 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
 
   const joinRoom = async (roomId: string) => {
     setLoading(true);
+    setError('');
     try {
       const roomRef = doc(db, 'rooms', roomId);
       const roomSnap = await getDoc(roomRef);
       
-      if (!roomSnap.exists()) throw new Error('방이 없어요.');
+      if (!roomSnap.exists()) throw new Error('방이 존재하지 않습니다.');
       const roomData = roomSnap.data() as Room;
       
       if (roomData.players.some(p => p.uid === user.uid)) {
@@ -85,8 +93,8 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
         return;
       }
 
-      if (roomData.players.length >= 8) throw new Error('방이 꽉 찼어요.');
-      if (roomData.status !== RoomStatus.WAITING) throw new Error('이미 시작된 게임이에요.');
+      if (roomData.players.length >= 8) throw new Error('방이 꽉 찼습니다. (최대 8명)');
+      if (roomData.status !== RoomStatus.WAITING) throw new Error('이미 게임이 진행 중이거나 종료된 방입니다.');
 
       const newPlayer: PlayerInfo = {
         uid: user.uid,
@@ -103,7 +111,8 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
       
       onJoinRoom(roomId);
     } catch (err: any) {
-      setError(err.message || '참가할 수 없어요.');
+      console.error("Join room error details:", err);
+      setError(err.message || '방 참가에 실패했습니다.');
     } finally {
       setLoading(false);
     }
@@ -118,7 +127,6 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Create or Join by code */}
         <div className="bg-white rounded-3xl p-8 shadow-xl border-t-8 border-yellow-400 flex flex-col items-center justify-center text-center">
           <div className="bg-yellow-50 p-6 rounded-full mb-6">
             <i className="fas fa-plus text-4xl text-yellow-500"></i>
@@ -128,7 +136,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
           <button
             onClick={createRoom}
             disabled={loading}
-            className="w-full py-4 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold text-xl shadow-lg transition-transform active:scale-95 mb-4"
+            className="w-full py-4 bg-yellow-400 hover:bg-yellow-500 text-white rounded-2xl font-bold text-xl shadow-lg transition-transform active:scale-95 mb-4 disabled:opacity-50"
           >
             {loading ? <i className="fas fa-spinner fa-spin"></i> : '방 만들기'}
           </button>
@@ -143,15 +151,15 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
             />
             <button 
               onClick={handleJoinByCode}
-              className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+              disabled={loading}
+              className="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors disabled:opacity-50"
             >
               참가
             </button>
           </div>
-          {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+          {error && <div className="text-red-500 text-sm mt-4 p-3 bg-red-50 rounded-lg border border-red-100 w-full">{error}</div>}
         </div>
 
-        {/* Room List */}
         <div className="bg-white rounded-3xl p-8 shadow-xl border-t-8 border-blue-400">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <i className="fas fa-list-ul text-blue-500"></i>
@@ -165,8 +173,8 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
             ) : (
               rooms.map(room => (
                 <div key={room.id} className="group p-4 rounded-2xl bg-blue-50 border-2 border-transparent hover:border-blue-200 transition-all flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-lg text-blue-900">방 번호: {room.id.substring(0,6)}...</h3>
+                  <div className="overflow-hidden">
+                    <h3 className="font-bold text-lg text-blue-900 truncate">코드: {room.id.substring(0,8)}...</h3>
                     <p className="text-sm text-blue-600 flex items-center gap-2">
                       <i className="fas fa-users"></i>
                       참가자: {room.players.length}/8명
@@ -174,9 +182,10 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
                   </div>
                   <button 
                     onClick={() => joinRoom(room.id)}
-                    className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-xl shadow-md transition-all group-hover:scale-105"
+                    disabled={loading}
+                    className="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-xl shadow-md transition-all group-hover:scale-105 whitespace-nowrap ml-2 disabled:opacity-50"
                   >
-                    참가하기
+                    참가
                   </button>
                 </div>
               ))

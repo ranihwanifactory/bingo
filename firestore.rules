@@ -1,16 +1,20 @@
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 사용자 프로필 규칙: 로그인한 사용자는 모든 프로필을 읽을 수 있고, 본인의 것만 수정 가능
+    // 사용자 프로필 규칙
     match /users/{userId} {
+      // 누구나 로그인했다면 프로필을 볼 수 있음
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      // 본인 프로필 수정 혹은 게임 결과 반영(승패 업데이트)을 위해 로그인한 사용자에게 허용
+      // (실제 서비스에서는 더 엄격해야 하지만, 게임 로직상 타인의 승수 업데이트가 필요함)
+      allow write: if request.auth != null;
     }
     
-    // 게임방 규칙: 로그인한 모든 사용자가 방을 만들고 참가하며 업데이트할 수 있음
+    // 게임방 규칙
     match /rooms/{roomId} {
+      // 로그인한 모든 사용자가 방을 조회, 생성, 수정할 수 있음
       allow read, create, update: if request.auth != null;
+      // 방장만이 방을 삭제할 수 있음
       allow delete: if request.auth != null && resource.data.hostId == request.auth.uid;
     }
   }
