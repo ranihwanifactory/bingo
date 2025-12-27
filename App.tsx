@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -41,7 +41,6 @@ export default function App() {
           }
         } catch (error) {
           console.error("Error fetching user profile:", error);
-          // profile remains null, but safeProfile will use authUser data
         }
       } else {
         setUser(null);
@@ -52,6 +51,20 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  // useMemo를 사용하여 user 정보가 바뀔 때마다 safeProfile을 갱신합니다.
+  const safeProfile = useMemo((): UserProfile | null => {
+    if (!user) return null;
+    return profile || {
+      uid: user.uid,
+      displayName: user.displayName || '빙고용사',
+      email: user.email || '',
+      photoURL: user.photoURL || '',
+      wins: 0,
+      losses: 0,
+      gamesPlayed: 0
+    };
+  }, [user, profile]);
 
   if (initializing) {
     return (
@@ -68,20 +81,9 @@ export default function App() {
     );
   }
 
-  if (!user) {
+  if (!user || !safeProfile) {
     return <Login />;
   }
-
-  // Ensure safeProfile always has essential fields if user is present
-  const safeProfile: UserProfile = profile || {
-    uid: user.uid,
-    displayName: user.displayName || '빙고용사',
-    email: user.email || '',
-    photoURL: user.photoURL || '',
-    wins: 0,
-    losses: 0,
-    gamesPlayed: 0
-  };
 
   if (currentRoomId) {
     return (
