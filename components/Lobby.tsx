@@ -25,7 +25,6 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Ensure db is initialized and user is valid
     if (!db) return;
 
     const q = query(
@@ -76,11 +75,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
       onJoinRoom(docRef.id);
     } catch (err: any) {
       console.error("Create room error details:", err);
-      if (err.code === 'permission-denied') {
-        setError('방을 만들 권한이 없습니다. Firestore 규칙을 확인해주세요.');
-      } else {
-        setError(`방을 만들 수 없어요: ${err.message || '알 수 없는 오류'}`);
-      }
+      setError(`방을 만들 수 없어요: ${err.message || '알 수 없는 오류'}`);
     } finally {
       setLoading(false);
     }
