@@ -25,6 +25,9 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    // Ensure db is initialized and user is valid
+    if (!db) return;
+
     const q = query(
       collection(db, 'rooms'), 
       where('status', '==', RoomStatus.WAITING)
@@ -43,13 +46,18 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
   }, []);
 
   const createRoom = async () => {
+    if (!user || !user.uid) {
+      setError('사용자 정보를 불러올 수 없습니다. 다시 로그인해주세요.');
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
       const player: PlayerInfo = {
         uid: user.uid,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
+        displayName: user.displayName || '빙고용사',
+        photoURL: user.photoURL || '',
         ready: true,
         isHost: true,
         bingoCount: 0
@@ -69,7 +77,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
     } catch (err: any) {
       console.error("Create room error details:", err);
       if (err.code === 'permission-denied') {
-        setError('데이터베이스 권한이 없습니다. Firebase Rules 설정을 확인해주세요.');
+        setError('방을 만들 권한이 없습니다. Firestore 규칙을 확인해주세요.');
       } else {
         setError(`방을 만들 수 없어요: ${err.message || '알 수 없는 오류'}`);
       }
@@ -79,6 +87,8 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
   };
 
   const joinRoom = async (roomId: string) => {
+    if (!user || !user.uid) return;
+
     setLoading(true);
     setError('');
     try {
@@ -98,8 +108,8 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
 
       const newPlayer: PlayerInfo = {
         uid: user.uid,
-        displayName: user.displayName,
-        photoURL: user.photoURL,
+        displayName: user.displayName || '빙고용사',
+        photoURL: user.photoURL || '',
         ready: false,
         isHost: false,
         bingoCount: 0
