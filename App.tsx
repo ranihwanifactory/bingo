@@ -41,6 +41,7 @@ export default function App() {
           }
         } catch (error) {
           console.error("Error fetching user profile:", error);
+          // Fallback handled by safeProfile memo
         }
       } else {
         setUser(null);
@@ -52,7 +53,6 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // useMemo를 사용하여 user 정보가 바뀔 때마다 safeProfile을 갱신합니다.
   const safeProfile = useMemo((): UserProfile | null => {
     if (!user) return null;
     return profile || {
