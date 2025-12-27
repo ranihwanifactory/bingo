@@ -46,7 +46,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
 
   const createRoom = async () => {
     if (!user || !user.uid) {
-      setError('잠시만 기다려주세요. 사용자 정보를 불러오고 있습니다.');
+      setError('로그인 정보가 올바르지 않습니다. 다시 로그인해주세요.');
       return;
     }
 
