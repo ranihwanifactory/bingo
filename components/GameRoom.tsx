@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   doc, 
   onSnapshot, 
@@ -16,11 +16,42 @@ interface GameRoomProps {
   onExit: () => void;
 }
 
+// Sound Effect Assets
+const SOUNDS = {
+  SELECT: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3',
+  BINGO_LINE: 'https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3',
+  START: 'https://assets.mixkit.co/active_storage/sfx/1084/1084-preview.mp3',
+  WIN: 'https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3',
+  LOSS: 'https://assets.mixkit.co/active_storage/sfx/251/251-preview.mp3',
+};
+
 const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
   const [room, setRoom] = useState<Room | null>(null);
   const [board, setBoard] = useState<number[]>([]);
   const [winnerFound, setWinnerFound] = useState(false);
   const [copied, setCopied] = useState(false);
+  
+  // Audio references
+  const audioRefs = useRef<{ [key: string]: HTMLAudioElement }>({});
+  const prevBingoCount = useRef(0);
+  const prevRoomStatus = useRef<RoomStatus | null>(null);
+  const prevSelectedCount = useRef(0);
+
+  // Initialize audio objects
+  useEffect(() => {
+    Object.entries(SOUNDS).forEach(([key, url]) => {
+      audioRefs.current[key] = new Audio(url);
+      audioRefs.current[key].volume = 0.4; // Subtle volume
+    });
+  }, []);
+
+  const playSound = (key: keyof typeof SOUNDS) => {
+    const audio = audioRefs.current[key];
+    if (audio) {
+      audio.currentTime = 0;
+      audio.play().catch(e => console.debug("Audio play blocked by browser policy", e));
+    }
+  };
 
   // Initialize board once
   useEffect(() => {
@@ -40,10 +71,27 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
         const data = snapshot.data() as Room;
         setRoom(data);
         
-        // Finalize results if someone won
+        // Track status changes for Start/End sounds
+        if (prevRoomStatus.current === RoomStatus.WAITING && data.status === RoomStatus.PLAYING) {
+          playSound('START');
+        }
+        
         if (data.status === RoomStatus.FINISHED && data.winner && !winnerFound) {
           setWinnerFound(true);
+          if (data.winner === user.uid) {
+            playSound('WIN');
+          } else {
+            playSound('LOSS');
+          }
         }
+
+        // Play sound when any number is selected (by me or others)
+        const currentSelectedCount = data.selectedNumbers?.length || 0;
+        if (currentSelectedCount > prevSelectedCount.current) {
+          playSound('SELECT');
+        }
+        prevSelectedCount.current = currentSelectedCount;
+        prevRoomStatus.current = data.status;
       } else {
         onExit();
       }
@@ -51,7 +99,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
       console.error("Firestore snapshot error:", error);
     });
     return unsubscribe;
-  }, [roomId, onExit, winnerFound]);
+  }, [roomId, onExit, winnerFound, user.uid]);
 
   const selectedNumbers = useMemo(() => room?.selectedNumbers || [], [room?.selectedNumbers]);
   const players = useMemo(() => room?.players || [], [room?.players]);
@@ -97,7 +145,7 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
 
   const bingoCount = useMemo(() => checkBingo(), [checkBingo]);
 
-  // Update server side bingo count
+  // Handle Bingo Line Sound and Update server side bingo count
   useEffect(() => {
     if (room?.status === RoomStatus.PLAYING) {
       const roomRef = doc(db, 'rooms', roomId);
@@ -105,6 +153,12 @@ const GameRoom: React.FC<GameRoomProps> = ({ roomId, user, onExit }) => {
         p.uid === user.uid ? { ...p, bingoCount } : p
       );
       updateDoc(roomRef, { players: updatedPlayers });
+
+      // Play bingo line sound if a new line is completed
+      if (bingoCount > prevBingoCount.current) {
+        playSound('BINGO_LINE');
+      }
+      prevBingoCount.current = bingoCount;
 
       // Win condition: 5 or more lines
       if (bingoCount >= 5 && !room.winner) {

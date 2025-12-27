@@ -46,7 +46,7 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
 
   const createRoom = async () => {
     if (!user || !user.uid) {
-      setError('사용자 정보를 불러올 수 없습니다. 다시 로그인해주세요.');
+      setError('잠시만 기다려주세요. 사용자 정보를 불러오고 있습니다.');
       return;
     }
 
@@ -75,14 +75,17 @@ const Lobby: React.FC<LobbyProps> = ({ onJoinRoom, user }) => {
       onJoinRoom(docRef.id);
     } catch (err: any) {
       console.error("Create room error details:", err);
-      setError(`방을 만들 수 없어요: ${err.message || '알 수 없는 오류'}`);
+      setError(`방을 만들 수 없어요: ${err.message || '로그인 상태를 확인해주세요.'}`);
     } finally {
       setLoading(false);
     }
   };
 
   const joinRoom = async (roomId: string) => {
-    if (!user || !user.uid) return;
+    if (!user || !user.uid) {
+      setError('로그인이 필요합니다.');
+      return;
+    }
 
     setLoading(true);
     setError('');

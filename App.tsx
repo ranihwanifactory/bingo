@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -42,7 +41,7 @@ export default function App() {
           }
         } catch (error) {
           console.error("Error fetching user profile:", error);
-          // Handled by safeProfile fallback
+          // Fallback handled by safeProfile in render
         }
       } else {
         setUser(null);
@@ -63,7 +62,7 @@ export default function App() {
             <div className="absolute -bottom-2 -right-2 bg-yellow-400 w-6 h-6 rounded-full animate-ping"></div>
           </div>
           <p className="text-pink-600 font-bold text-2xl mb-2">슈퍼 빙고 히어로</p>
-          <p className="text-gray-400 text-sm">로딩 중입니다...</p>
+          <p className="text-gray-400 text-sm">용사님의 정보를 불러오고 있어요...</p>
         </div>
       </div>
     );
